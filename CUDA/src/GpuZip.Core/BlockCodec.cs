@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Threading;
 
@@ -11,6 +12,19 @@ internal sealed class BlockCodec : IDisposable
         [TransformId.DeltaByte],
         [TransformId.XorByte],
         [TransformId.DeltaWord4, TransformId.ByteShuffle4]
+    ];
+
+    private static readonly TransformId[][] GpuFocusedPipelines =
+    [
+        [],
+        [TransformId.DeltaByte],
+        [TransformId.XorByte],
+        [TransformId.DeltaByte, TransformId.ByteShuffle2],
+        [TransformId.DeltaByte, TransformId.ByteShuffle4],
+        [TransformId.DeltaByte, TransformId.ByteShuffle8],
+        [TransformId.XorByte, TransformId.ByteShuffle2],
+        [TransformId.XorByte, TransformId.ByteShuffle4],
+        [TransformId.XorByte, TransformId.ByteShuffle8]
     ];
 
     private static readonly TransformId[][] ThoroughPipelines =
@@ -30,26 +44,50 @@ internal sealed class BlockCodec : IDisposable
     ];
 
     private readonly GpuZipCreateOptions _options;
-    private readonly CudaTransformer? _cuda;
+    private readonly CudaTransformer[] _cudaWorkers;
+    private readonly ConcurrentQueue<CudaTransformer> _cudaQueue = new();
+    private readonly SemaphoreSlim? _cudaSlots;
     private int _cudaUsed;
 
     public bool CudaUsed => Volatile.Read(ref _cudaUsed) != 0;
+    public int CudaWorkerCount => _cudaWorkers.Length;
 
     public BlockCodec(GpuZipCreateOptions options)
     {
         _options = options;
-        if (options.UseCuda) CudaTransformer.TryCreate(out _cuda);
+
+        if (!options.UseCuda)
+        {
+            _cudaWorkers = [];
+            return;
+        }
+
+        var desiredWorkers = options.MaximumPerformance
+            ? Math.Clamp(options.MaxParallelism > 0 ? options.MaxParallelism : Environment.ProcessorCount, 1, 4)
+            : 1;
+
+        var workers = new List<CudaTransformer>(desiredWorkers);
+        for (var i = 0; i < desiredWorkers; i++)
+        {
+            if (!CudaTransformer.TryCreate(out var worker) || worker is null) break;
+            workers.Add(worker);
+        }
+
+        _cudaWorkers = workers.ToArray();
+        foreach (var worker in _cudaWorkers) _cudaQueue.Enqueue(worker);
+        if (_cudaWorkers.Length > 0) _cudaSlots = new SemaphoreSlim(_cudaWorkers.Length, _cudaWorkers.Length);
     }
 
     public EncodedBlock Encode(ReadOnlySpan<byte> input)
     {
-        var pipelines = _options.ThoroughSearch ? ThoroughPipelines : FastPipelines;
+        var pipelines = _options.MaximumPerformance && _cudaWorkers.Length > 0
+            ? GpuFocusedPipelines
+            : _options.ThoroughSearch ? ThoroughPipelines : FastPipelines;
+
         var best = new EncodedBlock([], PayloadCodec.Raw, input.ToArray());
         var scores = new List<(TransformId[] Pipeline, int ProbeLength)>(pipelines.Length);
-        var probeQuality = Math.Min(2, _options.BrotliQuality);
+        var probeQuality = _options.MaximumPerformance ? 1 : Math.Min(2, _options.BrotliQuality);
 
-        // First pass: only retain the score. This keeps memory bounded when many
-        // blocks are encoded in parallel on high-core-count machines.
         foreach (var pipeline in pipelines)
         {
             var transformed = ApplyPipeline(input, pipeline);
@@ -57,13 +95,20 @@ internal sealed class BlockCodec : IDisposable
             scores.Add((pipeline, probe.Length));
         }
 
-        var finalistCount = _options.ThoroughSearch ? Math.Min(4, scores.Count) : scores.Count;
+        var finalistCount = _options.MaximumPerformance
+            ? Math.Min(3, scores.Count)
+            : _options.ThoroughSearch ? Math.Min(4, scores.Count) : scores.Count;
+
+        var finalQuality = _options.MaximumPerformance
+            ? Math.Min(_options.BrotliQuality, 6)
+            : _options.BrotliQuality;
+
         foreach (var candidate in scores
                      .OrderBy(value => value.ProbeLength + value.Pipeline.Length)
                      .Take(finalistCount))
         {
             var transformed = ApplyPipeline(input, candidate.Pipeline);
-            var compressed = CompressBrotli(transformed, _options.BrotliQuality, 24);
+            var compressed = CompressBrotli(transformed, finalQuality, 24);
             var candidateSize = compressed.Length + candidate.Pipeline.Length;
             var bestSize = best.Payload.Length + best.Pipeline.Length;
             if (candidateSize < bestSize)
@@ -90,15 +135,38 @@ internal sealed class BlockCodec : IDisposable
 
     private byte[] ApplyPipeline(ReadOnlySpan<byte> input, TransformId[] pipeline)
     {
-        if (pipeline.Length == 1 && input.Length >= 256 * 1024 && _cuda is not null &&
-            _cuda.TryTransform(input, pipeline[0], out var transformed))
+        if (pipeline.Length > 0 && input.Length >= 256 * 1024 && IsCudaTransform(pipeline[0]) &&
+            TryCudaTransform(input, pipeline[0], out var current))
         {
             Interlocked.Exchange(ref _cudaUsed, 1);
-            return transformed;
+            for (var i = 1; i < pipeline.Length; i++) current = ReversibleTransforms.Apply(current, pipeline[i]);
+            return current;
         }
 
         return ReversibleTransforms.ApplyPipeline(input, pipeline);
     }
+
+    private bool TryCudaTransform(ReadOnlySpan<byte> input, TransformId transform, out byte[] output)
+    {
+        output = Array.Empty<byte>();
+        if (_cudaSlots is null) return false;
+
+        _cudaSlots.Wait();
+        CudaTransformer? worker = null;
+        try
+        {
+            if (!_cudaQueue.TryDequeue(out worker)) return false;
+            return worker.TryTransform(input, transform, out output);
+        }
+        finally
+        {
+            if (worker is not null) _cudaQueue.Enqueue(worker);
+            _cudaSlots.Release();
+        }
+    }
+
+    private static bool IsCudaTransform(TransformId transform) =>
+        transform is TransformId.DeltaByte or TransformId.XorByte;
 
     private static byte[] CompressBrotli(ReadOnlySpan<byte> input, int quality, int window)
     {
@@ -118,7 +186,11 @@ internal sealed class BlockCodec : IDisposable
         return output;
     }
 
-    public void Dispose() => _cuda?.Dispose();
+    public void Dispose()
+    {
+        _cudaSlots?.Dispose();
+        foreach (var worker in _cudaWorkers) worker.Dispose();
+    }
 }
 
 internal sealed record EncodedBlock(TransformId[] Pipeline, PayloadCodec Codec, byte[] Payload);
