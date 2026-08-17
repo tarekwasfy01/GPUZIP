@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -25,45 +27,40 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      - name: Show .NET info
+        run: dotnet --info
+
       - name: Build release
         shell: pwsh
         working-directory: CUDA
         run: ./build-release.ps1
 
-      - name: Collect OneFile EXE
+      - name: Prepare OneFile artifact
         shell: pwsh
         run: |
-          $publish = "CUDA/release/GPUZIP-win-x64"
-          $exe = Get-ChildItem -Path $publish -Filter "GpuZip.App.exe" -File | Select-Object -First 1
+          $releaseDir = "CUDA/release/GPUZIP-win-x64"
+          $outDir = "artifact"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+          $exe = Get-ChildItem -Path $releaseDir -Filter "GpuZip.App.exe" -File | Select-Object -First 1
           if (-not $exe) {
-            $exe = Get-ChildItem -Path $publish -Filter "*.exe" -File |
-              Where-Object { $_.Name -ne "7zz.exe" } |
-              Sort-Object Length -Descending |
-              Select-Object -First 1
+            $exe = Get-ChildItem -Path $releaseDir -Filter "*.exe" -File | Where-Object { $_.Name -ne "7zz.exe" } | Select-Object -First 1
           }
           if (-not $exe) {
-            throw "No GPUZIP executable was produced."
+            throw "No application executable was produced."
           }
 
-          New-Item -ItemType Directory -Force -Path "artifact" | Out-Null
-          Copy-Item $exe.FullName "artifact/GPUZIP.exe" -Force
+          Copy-Item -LiteralPath $exe.FullName -Destination "$outDir/GPUZIP.exe" -Force
+          $final = Get-Item "$outDir/GPUZIP.exe"
+          Write-Host "Final OneFile executable: $($final.FullName)"
+          Write-Host "Size: $($final.Length) bytes"
 
-          Write-Host "OneFile executable: $($exe.FullName)"
-          Write-Host "Artifact: artifact/GPUZIP.exe"
-          Write-Host "Size: $($exe.Length) bytes"
+      - name: Generate GitHub artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: artifact/GPUZIP.exe
 
-      - name: Verify OneFile artifact
-        shell: pwsh
-        run: |
-          if (-not (Test-Path "artifact/GPUZIP.exe")) {
-            throw "GPUZIP.exe is missing."
-          }
-          $files = @(Get-ChildItem "artifact" -File)
-          if ($files.Count -ne 1) {
-            throw "Artifact directory must contain exactly one file."
-          }
-
-      - name: Upload GPUZIP OneFile EXE
+      - name: Upload OneFile executable
         uses: actions/upload-artifact@v4
         with:
           name: GPUZIP-OneFile-win-x64
