@@ -22,8 +22,6 @@ if (-not (Test-Path $sevenZipExe)) {
     finally { Pop-Location }
 }
 
-# Build the original 7-Zip File Manager from the vendored upstream source so the
-# classic 7-Zip GUI remains available inside the GPUZIP distribution.
 if (-not (Test-Path $sevenZipFmExe)) {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (-not (Test-Path $vswhere)) { throw "vswhere.exe was not found; cannot build 7zFM.exe" }
@@ -31,7 +29,6 @@ if (-not (Test-Path $sevenZipFmExe)) {
     if (-not $vsInstall) { throw "Visual C++ build tools were not found; cannot build 7zFM.exe" }
     $vsDevCmd = Join-Path $vsInstall 'Common7\Tools\VsDevCmd.bat'
     if (-not (Test-Path $vsDevCmd)) { throw "VsDevCmd.bat was not found: $vsDevCmd" }
-
     $buildCommand = "call `"$vsDevCmd`" -no_logo -arch=x64 -host_arch=x64 && cd /d `"$sevenZipFmProject`" && nmake /nologo PLATFORM=x64"
     & $env:ComSpec /d /c $buildCommand
     if ($LASTEXITCODE -ne 0) { throw "7-Zip File Manager build failed with exit code $LASTEXITCODE" }
@@ -40,8 +37,6 @@ if (-not (Test-Path $sevenZipFmExe)) { throw "7zFM.exe was not produced: $sevenZ
 
 Copy-Item (Join-Path $projectRoot 'third_party\7zip\DOC\license.txt') (Join-Path $projectRoot '7zip-license.txt') -Force
 
-# Keep the .slnx for newer Visual Studio/MSBuild, but do not depend on its parser
-# in the pinned .NET 8 release build. Restore the required projects directly.
 $coreProject = Join-Path $projectRoot 'src\GpuZip.Core\GpuZip.Core.csproj'
 $selfTestProject = Join-Path $projectRoot 'tests\GpuZip.SelfTest\GpuZip.SelfTest.csproj'
 $appProject = Join-Path $projectRoot 'src\GpuZip.App\GpuZip.App.csproj'
@@ -55,13 +50,16 @@ if ($LASTEXITCODE -ne 0) { throw "WPF app restore failed" }
 
 & dotnet build $coreProject -c Release --no-restore
 if ($LASTEXITCODE -ne 0) { throw "Core build failed" }
-
 & dotnet run --project $selfTestProject -c Release -r win-x64 --no-restore
 if ($LASTEXITCODE -ne 0) { throw "Self-test failed" }
 
 if (Test-Path $releaseDir) { Remove-Item -LiteralPath $releaseDir -Recurse -Force }
 & dotnet publish $appProject -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishReadyToRun=false --no-restore -o $releaseDir
 if ($LASTEXITCODE -ne 0) { throw "WPF desktop publish failed" }
+
+$publishedToolsDir = Join-Path $releaseDir 'Tools\7zip'
+New-Item -ItemType Directory -Force -Path $publishedToolsDir | Out-Null
+Copy-Item $sevenZipFmExe (Join-Path $publishedToolsDir '7zFM.exe') -Force
 
 $appExe = Join-Path $releaseDir 'GpuZip.App.exe'
 $publishedSevenZip = Join-Path $releaseDir 'Tools\7zip\7zz.exe'
