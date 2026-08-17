@@ -1,0 +1,142 @@
+<Window
+    x:Class="GpuZip.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="GPUZIP">
+
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Padding="20,16" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <FontIcon Glyph="&#xE7B8;" FontSize="30" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                <StackPanel>
+                    <TextBlock Text="GPUZIP" FontSize="24" FontWeight="SemiBold" />
+                    <TextBlock Text="Universal archives and adaptive GPU compression" Opacity="0.68" />
+                </StackPanel>
+            </StackPanel>
+            <Border Grid.Column="1" Padding="12,6" CornerRadius="12" Background="{ThemeResource AccentFillColorSecondaryBrush}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE950;" />
+                    <TextBlock x:Name="CudaStatusText" Text="Detecting CUDA…" VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <CommandBar DefaultLabelPosition="Right" IsOpen="True">
+                <AppBarButton Icon="OpenFile" Label="Open archive" Click="OpenArchive_Click" />
+                <AppBarButton Icon="Add" Label="Add files" Click="AddFiles_Click" />
+                <AppBarButton Icon="Folder" Label="Add folder" Click="AddFolder_Click" />
+                <AppBarButton Icon="Save" Label="Create archive" Click="CreateArchive_Click" />
+                <AppBarSeparator />
+                <AppBarButton Icon="Download" Label="Extract" Click="Extract_Click" />
+                <AppBarButton Icon="Accept" Label="Test" Click="Test_Click" />
+            </CommandBar>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" Margin="10,5,20,5" VerticalAlignment="Center">
+                <ComboBox x:Name="FormatComboBox" Width="178" SelectedIndex="0">
+                    <ComboBoxItem Content="GPUZIP (.gpuz)" Tag="gpuz" />
+                    <ComboBoxItem Content="7-Zip (.7z)" Tag="7z" />
+                    <ComboBoxItem Content="ZIP (.zip)" Tag="zip" />
+                    <ComboBoxItem Content="TAR (.tar)" Tag="tar" />
+                    <ComboBoxItem Content="GZip (.gz)" Tag="gzip" />
+                    <ComboBoxItem Content="BZip2 (.bz2)" Tag="bzip2" />
+                    <ComboBoxItem Content="XZ (.xz)" Tag="xz" />
+                </ComboBox>
+                <ToggleButton x:Name="CudaToggle" IsChecked="True" Content="Use CUDA" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="20,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="250" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Padding="16" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Inputs" FontSize="18" FontWeight="SemiBold" />
+                    <ListView x:Name="InputList" Grid.Row="1" Margin="0,10" SelectionMode="Multiple" />
+                    <Button Grid.Row="2" HorizontalAlignment="Stretch" Content="Remove selected" Click="RemoveSelected_Click" />
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid Padding="16,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="ArchiveTitle" Text="No archive open" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock x:Name="ArchiveSummary" Grid.Column="1" Opacity="0.68" />
+                    </Grid>
+                    <ListView x:Name="ArchiveList" Grid.Row="1" SelectionMode="Extended">
+                        <ListView.Header>
+                            <Grid Padding="12,6" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="3*" /><ColumnDefinition Width="80" /><ColumnDefinition Width="100" />
+                                    <ColumnDefinition Width="100" /><ColumnDefinition Width="150" /><ColumnDefinition Width="2*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Name" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="Type" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="2" Text="Size" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="3" Text="Packed" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="4" Text="Modified" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="5" Text="Method" FontWeight="SemiBold" />
+                            </Grid>
+                        </ListView.Header>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="4" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="3*" /><ColumnDefinition Width="80" /><ColumnDefinition Width="100" />
+                                        <ColumnDefinition Width="100" /><ColumnDefinition Width="150" /><ColumnDefinition Width="2*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Type}" />
+                                    <TextBlock Grid.Column="2" Text="{Binding Size}" />
+                                    <TextBlock Grid.Column="3" Text="{Binding Packed}" />
+                                    <TextBlock Grid.Column="4" Text="{Binding Modified}" />
+                                    <TextBlock Grid.Column="5" Text="{Binding Method}" TextTrimming="CharacterEllipsis" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="3" Padding="20,10" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="300" /></Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock x:Name="StatusText" Text="Ready" />
+                <TextBlock x:Name="DetailText" FontSize="12" Opacity="0.65" Text="7-Zip engine and GPUZIP codec ready" />
+            </StackPanel>
+            <ProgressBar x:Name="OperationProgress" Grid.Column="1" VerticalAlignment="Center" Minimum="0" Maximum="100" />
+        </Grid>
+    </Grid>
+</Window>
