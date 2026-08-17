@@ -23,7 +23,7 @@ public sealed partial class MainWindow : Window
         ArchiveList.ItemsSource = _entries;
         CudaCheck.IsChecked = true;
         MaximumPerformanceCheck.IsChecked = true;
-        CudaStatusText.Text = "CUDA enabled · CPU fallback";
+        CudaStatusText.Text = "CUDA enabled · GPU-focused mode";
         DetailText.Text = _sevenZip.IsAvailable
             ? $"Bundled 7-Zip engine ready · original 7-Zip GUI {(_sevenZip.IsFileManagerAvailable ? "ready" : "pending build")} · {Environment.ProcessorCount} logical CPU cores"
             : "Bundled 7-Zip engine not found";
@@ -158,19 +158,23 @@ public sealed partial class MainWindow : Window
                 ArchiveOperationResult result;
                 if (format == "gpuz")
                 {
+                    var cudaEnabled = CudaCheck.IsChecked == true;
+                    var blockSize = maximumPerformance && cudaEnabled ? 16 * 1024 * 1024 : 4 * 1024 * 1024;
+                    var brotliQuality = maximumPerformance ? 6 : 11;
+
                     DetailText.Text = maximumPerformance
-                        ? $"Maximum performance · {Environment.ProcessorCount} CPU workers requested · CUDA {(CudaCheck.IsChecked == true ? "enabled" : "disabled")}" 
+                        ? $"GPU-focused maximum performance · {Environment.ProcessorCount} CPU workers · up to 4 CUDA workers · {blockSize / 1024 / 1024} MiB blocks · Brotli q{brotliQuality}"
                         : "Balanced compression mode";
 
                     var progress = new Progress<ArchiveProgress>(UpdateProgress);
                     result = await GpuZipArchive.CreateAsync(dialog.FileName, _inputs, new GpuZipCreateOptions
                     {
-                        UseCuda = CudaCheck.IsChecked == true,
-                        ThoroughSearch = true,
+                        UseCuda = cudaEnabled,
+                        ThoroughSearch = !maximumPerformance,
                         MaximumPerformance = maximumPerformance,
                         MaxParallelism = maximumPerformance ? Environment.ProcessorCount : 1,
-                        BlockSize = 4 * 1024 * 1024,
-                        BrotliQuality = 11
+                        BlockSize = blockSize,
+                        BrotliQuality = brotliQuality
                     }, progress);
                 }
                 else
