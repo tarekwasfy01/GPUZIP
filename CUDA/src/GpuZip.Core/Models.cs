@@ -31,6 +31,7 @@ public sealed record GpuZipCreateOptions
     public bool ThoroughSearch { get; init; } = true;
     public bool MaximumPerformance { get; init; } = true;
     public int MaxParallelism { get; init; } = Math.Max(1, Environment.ProcessorCount);
+    public bool UseContainerRecompression { get; init; } = true;
 }
 
 public sealed record ArchiveOperationResult(
@@ -58,5 +59,6 @@ internal enum TransformId : byte
 internal enum PayloadCodec : byte
 {
     Raw = 0,
-    Brotli = 1
+    Brotli = 1,
+    PreflateZstd = 2
 }
