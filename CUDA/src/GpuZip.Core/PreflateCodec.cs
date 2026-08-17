@@ -5,7 +5,7 @@ using System.Text;
 
 namespace GpuZip.Core;
 
-internal static unsafe class PreflateCodec
+internal static class PreflateCodec
 {
     private const string LibraryName = "preflate_rs_0_7.dll";
     private const int CompressionLevel = 14;
@@ -54,7 +54,6 @@ internal static unsafe class PreflateCodec
         CancellationToken cancellationToken = default)
     {
         if (!IsAvailable) return null;
-
         var inputInfo = new FileInfo(inputPath);
         if (inputInfo.Length < 64 * 1024) return null;
 
@@ -73,7 +72,6 @@ internal static unsafe class PreflateCodec
                 File.Delete(outputPath);
                 return null;
             }
-
             return new(inputInfo.Length, written, digest);
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException or InvalidOperationException)
@@ -156,7 +154,6 @@ internal static unsafe class PreflateCodec
                 }
                 if (result == 1) break;
             }
-
             return totalWritten;
         }
         finally
@@ -213,7 +210,7 @@ internal static unsafe class PreflateCodec
         }
     }
 
-    private static int Invoke(nint context, ReadOnlySpan<byte> input, bool complete, byte[] output, byte[] error, bool compress, out int written)
+    private static unsafe int Invoke(nint context, ReadOnlySpan<byte> input, bool complete, byte[] output, byte[] error, bool compress, out int written)
     {
         ulong nativeWritten = 0;
         int result;
@@ -260,10 +257,10 @@ internal static unsafe class PreflateCodec
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)] private static extern nint create_compression_context(uint flags);
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)] private static extern void free_compression_context(nint context);
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)] private static extern int compress_buffer(nint context, byte* inputBuffer, ulong inputBufferSize, [MarshalAs(UnmanagedType.I1)] bool inputComplete, byte* outputBuffer, ulong outputBufferSize, ulong* resultSize, byte* errorString, ulong errorStringBufferLength);
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)] private static extern unsafe int compress_buffer(nint context, byte* inputBuffer, ulong inputBufferSize, [MarshalAs(UnmanagedType.I1)] bool inputComplete, byte* outputBuffer, ulong outputBufferSize, ulong* resultSize, byte* errorString, ulong errorStringBufferLength);
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)] private static extern nint create_decompression_context(uint flags, ulong capacity);
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)] private static extern void free_decompression_context(nint context);
-    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)] private static extern int decompress_buffer(nint context, byte* inputBuffer, ulong inputBufferSize, [MarshalAs(UnmanagedType.I1)] bool inputComplete, byte* outputBuffer, ulong outputBufferSize, ulong* resultSize, byte* errorString, ulong errorStringBufferLength);
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)] private static extern unsafe int decompress_buffer(nint context, byte* inputBuffer, ulong inputBufferSize, [MarshalAs(UnmanagedType.I1)] bool inputComplete, byte* outputBuffer, ulong outputBufferSize, ulong* resultSize, byte* errorString, ulong errorStringBufferLength);
 }
 
 internal sealed record PreflateFileCompressionResult(long InputBytes, long OutputBytes, byte[] Sha256);
