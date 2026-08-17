@@ -27,10 +27,10 @@ public sealed record GpuZipCreateOptions
 {
     public int BlockSize { get; init; } = 4 * 1024 * 1024;
     public int BrotliQuality { get; init; } = 11;
-    // CUDA is opt-in. A native GPU driver failure can terminate the host process,
-    // so CPU fallback is the safe default for GUI/CLI startup and unattended use.
-    public bool UseCuda { get; init; } = false;
+    public bool UseCuda { get; init; } = true;
     public bool ThoroughSearch { get; init; } = true;
+    public bool MaximumPerformance { get; init; } = true;
+    public int MaxParallelism { get; init; } = Math.Max(1, Environment.ProcessorCount);
 }
 
 public sealed record ArchiveOperationResult(
