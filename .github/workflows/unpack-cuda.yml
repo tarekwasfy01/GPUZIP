@@ -1,0 +1,39 @@
+name: Unpack CUDA archive
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - CUDA.zip
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Unpack CUDA.zip
+        run: |
+          set -e
+          tmpdir="$(mktemp -d)"
+          unzip -q CUDA.zip -d "$tmpdir"
+          cp -a "$tmpdir"/. .
+          rm -f CUDA.zip
+
+      - name: Commit extracted files to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Unpack CUDA archive"
+          git push origin HEAD:main
