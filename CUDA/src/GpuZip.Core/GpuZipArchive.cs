@@ -56,7 +56,7 @@ public static class GpuZipArchive
                 {
                     var read = await ReadBlockAsync(input, buffer, cancellationToken).ConfigureAwait(false);
                     if (read == 0) break;
-                    var original = buffer.AsSpan(0, read);
+                    var original = buffer.AsMemory(0, read).ToArray();
                     var encoded = codec.Encode(original);
                     writer.Write(read);
                     writer.Write((byte)encoded.Codec);
