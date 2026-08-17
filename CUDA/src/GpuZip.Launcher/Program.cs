@@ -8,11 +8,27 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        var logDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "GPUZIP");
+        Directory.CreateDirectory(logDir);
+        var logPath = Path.Combine(logDir, "launcher.log");
+
+        void Log(string text)
+        {
+            try
+            {
+                File.AppendAllText(logPath, $"[{DateTime.Now:O}] {text}{Environment.NewLine}");
+            }
+            catch { }
+        }
+
         try
         {
-            var exePath = Environment.ProcessPath;
-            if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
-                throw new InvalidOperationException("GPUZIP launcher path could not be determined.");
+            Log("Launcher started.");
+            var exePath = Environment.ProcessPath
+                ?? throw new InvalidOperationException("Could not determine launcher executable path.");
+            Log($"Launcher path: {exePath}");
 
             var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(exePath))).Substring(0, 16);
             var runtimeDir = Path.Combine(
@@ -20,9 +36,11 @@ internal static class Program
                 "GPUZIP", "Runtime", hash);
             var marker = Path.Combine(runtimeDir, ".ready");
             var appExe = Path.Combine(runtimeDir, "GpuZip.App.exe");
+            Log($"Runtime directory: {runtimeDir}");
 
             if (!File.Exists(marker) || !File.Exists(appExe))
             {
+                Log("Extracting embedded payload.");
                 if (Directory.Exists(runtimeDir))
                     Directory.Delete(runtimeDir, true);
                 Directory.CreateDirectory(runtimeDir);
@@ -32,30 +50,51 @@ internal static class Program
                 using var archive = new ZipArchive(payload, ZipArchiveMode.Read);
                 archive.ExtractToDirectory(runtimeDir, overwriteFiles: true);
                 File.WriteAllText(marker, hash);
+                Log("Payload extraction completed.");
+            }
+            else
+            {
+                Log("Using existing extracted payload.");
             }
 
+            if (!File.Exists(appExe))
+                throw new FileNotFoundException("GpuZip.App.exe was not found after extraction.", appExe);
+
+            Log($"Starting app: {appExe}");
             var psi = new ProcessStartInfo
             {
                 FileName = appExe,
                 WorkingDirectory = runtimeDir,
-                UseShellExecute = false
+                UseShellExecute = true
             };
             foreach (var arg in args)
                 psi.ArgumentList.Add(arg);
 
             using var process = Process.Start(psi)
                 ?? throw new InvalidOperationException("GPUZIP could not be started.");
-            process.WaitForExit();
+
+            if (!process.WaitForExit(5000))
+            {
+                Log("App is still running after 5 seconds; launcher exits successfully.");
+                return 0;
+            }
+
+            Log($"App exited quickly with code {process.ExitCode}.");
+            if (process.ExitCode != 0)
+            {
+                System.Windows.Forms.MessageBox.Show(
+                    $"GPUZIP exited immediately with code {process.ExitCode}.\n\nSee: {logPath}\n\nAlso check: %LOCALAPPDATA%\\GPUZIP\\app-crash.log",
+                    "GPUZIP startup error",
+                    System.Windows.Forms.MessageBoxButtons.OK,
+                    System.Windows.Forms.MessageBoxIcon.Error);
+            }
             return process.ExitCode;
         }
         catch (Exception ex)
         {
+            Log("Launcher exception: " + ex);
             try
             {
-                var logDir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "GPUZIP");
-                Directory.CreateDirectory(logDir);
                 File.WriteAllText(Path.Combine(logDir, "launcher-error.txt"), ex.ToString());
             }
             catch { }
