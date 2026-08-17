@@ -10,7 +10,10 @@ internal static class Program
     {
         try
         {
-            var exePath = Environment.ProcessPath ?? Assembly.GetExecutingAssembly().Location;
+            var exePath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+                throw new InvalidOperationException("GPUZIP launcher path could not be determined.");
+
             var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(exePath))).Substring(0, 16);
             var runtimeDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
