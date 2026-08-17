@@ -1,0 +1,52 @@
+name: Build GPUZIP Windows x64
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "CUDA/**"
+      - ".github/workflows/build-gpuzip.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Show .NET info
+        run: dotnet --info
+
+      - name: Build release
+        shell: pwsh
+        working-directory: CUDA
+        run: ./build-release.ps1
+
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path "CUDA/release/GPUZIP-win-x64" -Filter "*.exe" -File | Select-Object -First 1
+          if (-not $exe) {
+            throw "No executable was produced."
+          }
+          Write-Host "Built executable: $($exe.FullName)"
+          Write-Host "Size: $($exe.Length) bytes"
+
+      - name: Upload Windows x64 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: GPUZIP-win-x64
+          path: CUDA/release/GPUZIP-win-x64/**
+          if-no-files-found: error
+          retention-days: 30
