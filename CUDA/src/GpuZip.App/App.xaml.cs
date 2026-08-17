@@ -11,13 +11,41 @@ public partial class App : Application
         InitializeComponent();
         UnhandledException += (_, args) =>
         {
-            System.Diagnostics.Debug.WriteLine(args.Exception);
+            try
+            {
+                var logDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "GPUZIP");
+                Directory.CreateDirectory(logDir);
+                File.AppendAllText(
+                    Path.Combine(logDir, "app-crash.log"),
+                    $"[{DateTime.Now:O}] {args.Exception}{Environment.NewLine}");
+            }
+            catch { }
         };
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new MainWindow();
-        _window.Activate();
+        try
+        {
+            _window = new MainWindow();
+            _window.Activate();
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                var logDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "GPUZIP");
+                Directory.CreateDirectory(logDir);
+                File.AppendAllText(
+                    Path.Combine(logDir, "app-crash.log"),
+                    $"[{DateTime.Now:O}] OnLaunched failed: {ex}{Environment.NewLine}");
+            }
+            catch { }
+            throw;
+        }
     }
 }
