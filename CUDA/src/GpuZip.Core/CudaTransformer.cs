@@ -48,6 +48,7 @@ DONE:
 }
 """;
 
+    private readonly object _gate = new();
     private nint _context;
     private nint _module;
     private nint _function;
@@ -64,17 +65,13 @@ DONE:
 
     public static CudaDeviceInfo Probe()
     {
-        // Capability probing must not invoke the CUDA driver. A malformed or
-        // incompatible native driver can fail-fast the entire .NET process before
-        // managed exception handling runs. Loading the module is sufficient to
-        // report that CUDA can be attempted on demand.
         nint handle = 0;
         try
         {
             if (!NativeLibrary.TryLoad("nvcuda.dll", out handle))
                 return new(false, "CPU fallback", "NVIDIA CUDA driver library not found");
 
-            return new(true, "NVIDIA CUDA", "CUDA driver detected; initialization is deferred until use");
+            return new(true, "NVIDIA CUDA", "CUDA driver detected; initialization is deferred until compression");
         }
         catch (Exception ex)
         {
@@ -106,6 +103,12 @@ DONE:
             {
                 Check(Cuda.cuModuleLoadData(out module, ptx));
                 Check(Cuda.cuModuleGetFunction(out var function, module, "gpuz_transform"));
+
+                // cuCtxCreate makes the context current on this thread. Detach it
+                // so worker threads can push it explicitly during parallel encoding.
+                Check(Cuda.cuCtxPopCurrent_v2(out var popped));
+                if (popped != context) throw new CudaException(-1);
+
                 transformer = new CudaTransformer(context, module, function,
                     System.Text.Encoding.UTF8.GetString(name).TrimEnd('\0'));
                 context = 0;
@@ -132,53 +135,71 @@ DONE:
         if (id is not (TransformId.DeltaByte or TransformId.XorByte)) return false;
         if (input.IsEmpty) { output = Array.Empty<byte>(); return true; }
 
-        ulong deviceInput = 0;
-        ulong deviceOutput = 0;
-        try
+        lock (_gate)
         {
-            Check(Cuda.cuMemAlloc_v2(out deviceInput, (nuint)input.Length));
-            Check(Cuda.cuMemAlloc_v2(out deviceOutput, (nuint)input.Length));
-            fixed (byte* inputPointer = input)
+            ulong deviceInput = 0;
+            ulong deviceOutput = 0;
+            var pushed = false;
+            try
             {
-                Check(Cuda.cuMemcpyHtoD_v2(deviceInput, (nint)inputPointer, (nuint)input.Length));
+                Check(Cuda.cuCtxPushCurrent_v2(_context));
+                pushed = true;
+                Check(Cuda.cuMemAlloc_v2(out deviceInput, (nuint)input.Length));
+                Check(Cuda.cuMemAlloc_v2(out deviceOutput, (nuint)input.Length));
+                fixed (byte* inputPointer = input)
+                {
+                    Check(Cuda.cuMemcpyHtoD_v2(deviceInput, (nint)inputPointer, (nuint)input.Length));
+                }
+
+                var length = (uint)input.Length;
+                var mode = id == TransformId.DeltaByte ? 1u : 2u;
+                var inputArg = deviceInput;
+                var outputArg = deviceOutput;
+                nint* parameters = stackalloc nint[4];
+                parameters[0] = (nint)(&inputArg);
+                parameters[1] = (nint)(&outputArg);
+                parameters[2] = (nint)(&length);
+                parameters[3] = (nint)(&mode);
+                var blocks = (uint)((input.Length + 255) / 256);
+                Check(Cuda.cuLaunchKernel(_function, blocks, 1, 1, 256, 1, 1, 0, 0, (nint)parameters, 0));
+                Check(Cuda.cuCtxSynchronize());
+
+                output = new byte[input.Length];
+                fixed (byte* outputPointer = output)
+                {
+                    Check(Cuda.cuMemcpyDtoH_v2((nint)outputPointer, deviceOutput, (nuint)output.Length));
+                }
+                return true;
             }
-
-            var length = (uint)input.Length;
-            var mode = id == TransformId.DeltaByte ? 1u : 2u;
-            var inputArg = deviceInput;
-            var outputArg = deviceOutput;
-            nint* parameters = stackalloc nint[4];
-            parameters[0] = (nint)(&inputArg);
-            parameters[1] = (nint)(&outputArg);
-            parameters[2] = (nint)(&length);
-            parameters[3] = (nint)(&mode);
-            var blocks = (uint)((input.Length + 255) / 256);
-            Check(Cuda.cuLaunchKernel(_function, blocks, 1, 1, 256, 1, 1, 0, 0, (nint)parameters, 0));
-            Check(Cuda.cuCtxSynchronize());
-
-            output = new byte[input.Length];
-            fixed (byte* outputPointer = output)
+            catch (Exception ex) when (ex is CudaException or SEHException)
             {
-                Check(Cuda.cuMemcpyDtoH_v2((nint)outputPointer, deviceOutput, (nuint)output.Length));
+                output = Array.Empty<byte>();
+                return false;
             }
-            return true;
-        }
-        catch (Exception ex) when (ex is CudaException or SEHException)
-        {
-            output = Array.Empty<byte>();
-            return false;
-        }
-        finally
-        {
-            if (deviceInput != 0) _ = Cuda.cuMemFree_v2(deviceInput);
-            if (deviceOutput != 0) _ = Cuda.cuMemFree_v2(deviceOutput);
+            finally
+            {
+                if (deviceInput != 0) _ = Cuda.cuMemFree_v2(deviceInput);
+                if (deviceOutput != 0) _ = Cuda.cuMemFree_v2(deviceOutput);
+                if (pushed) _ = Cuda.cuCtxPopCurrent_v2(out _);
+            }
         }
     }
 
     public void Dispose()
     {
-        if (_module != 0) { _ = Cuda.cuModuleUnload(_module); _module = 0; }
-        if (_context != 0) { _ = Cuda.cuCtxDestroy_v2(_context); _context = 0; }
+        lock (_gate)
+        {
+            if (_context == 0) return;
+            var pushed = Cuda.cuCtxPushCurrent_v2(_context) == 0;
+            if (pushed)
+            {
+                if (_module != 0) _ = Cuda.cuModuleUnload(_module);
+                _module = 0;
+                _ = Cuda.cuCtxPopCurrent_v2(out _);
+            }
+            _ = Cuda.cuCtxDestroy_v2(_context);
+            _context = 0;
+        }
         GC.SuppressFinalize(this);
     }
 
@@ -197,6 +218,8 @@ DONE:
         [LibraryImport(Library)] internal static partial int cuDeviceGetName([Out] byte[] name, int len, int dev);
         [LibraryImport(Library)] internal static partial int cuCtxCreate_v2(out nint context, uint flags, int dev);
         [LibraryImport(Library)] internal static partial int cuCtxDestroy_v2(nint context);
+        [LibraryImport(Library)] internal static partial int cuCtxPushCurrent_v2(nint context);
+        [LibraryImport(Library)] internal static partial int cuCtxPopCurrent_v2(out nint context);
         [LibraryImport(Library)] internal static partial int cuCtxSynchronize();
         [LibraryImport(Library)] internal static partial int cuModuleLoadData(out nint module, nint image);
         [LibraryImport(Library)] internal static partial int cuModuleUnload(nint module);
