@@ -25,7 +25,7 @@ public sealed partial class MainWindow : Window
         MaximumPerformanceCheck.IsChecked = true;
         CudaStatusText.Text = "CUDA enabled · CPU fallback";
         DetailText.Text = _sevenZip.IsAvailable
-            ? $"Bundled 7-Zip engine ready · {Environment.ProcessorCount} logical CPU cores"
+            ? $"Bundled 7-Zip engine ready · original 7-Zip GUI {(_sevenZip.IsFileManagerAvailable ? "ready" : "pending build")} · {Environment.ProcessorCount} logical CPU cores"
             : "Bundled 7-Zip engine not found";
         App.LogStartup("Classic WPF file manager initialized; CUDA remains deferred until compression.");
     }
@@ -40,6 +40,20 @@ public sealed partial class MainWindow : Window
         };
         if (dialog.ShowDialog(this) != true) return;
         await OpenArchiveAsync(dialog.FileName);
+    }
+
+    private async void OpenSevenZipGui_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _sevenZip.OpenFileManager(_currentArchive);
+            StatusText.Text = "Original 7-Zip File Manager opened";
+        }
+        catch (Exception ex)
+        {
+            App.LogStartup($"Could not open 7-Zip File Manager: {ex}");
+            await ShowMessageAsync("7-Zip File Manager", ex.Message, true);
+        }
     }
 
     private async Task OpenArchiveAsync(string path)
