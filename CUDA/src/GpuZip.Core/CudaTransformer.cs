@@ -64,17 +64,28 @@ DONE:
 
     public static CudaDeviceInfo Probe()
     {
+        // Capability probing must not invoke the CUDA driver. A malformed or
+        // incompatible native driver can fail-fast the entire .NET process before
+        // managed exception handling runs. Loading the module is sufficient to
+        // report that CUDA can be attempted on demand.
+        nint handle = 0;
         try
         {
-            Check(Cuda.cuInit(0));
-            Check(Cuda.cuDeviceGet(out var device, 0));
-            var name = new byte[256];
-            Check(Cuda.cuDeviceGetName(name, name.Length, device));
-            return new(true, System.Text.Encoding.UTF8.GetString(name).TrimEnd('\0'), "CUDA driver backend ready");
+            if (!NativeLibrary.TryLoad("nvcuda.dll", out handle))
+                return new(false, "CPU fallback", "NVIDIA CUDA driver library not found");
+
+            return new(true, "NVIDIA CUDA", "CUDA driver detected; initialization is deferred until use");
         }
-        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or CudaException)
+        catch (Exception ex)
         {
             return new(false, "CPU fallback", ex.Message);
+        }
+        finally
+        {
+            if (handle != 0)
+            {
+                try { NativeLibrary.Free(handle); } catch { }
+            }
         }
     }
 
@@ -106,7 +117,7 @@ DONE:
                 Marshal.FreeCoTaskMem(ptx);
             }
         }
-        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or CudaException)
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or CudaException or SEHException)
         {
             if (module != 0) _ = Cuda.cuModuleUnload(module);
             if (context != 0) _ = Cuda.cuCtxDestroy_v2(context);
@@ -152,7 +163,7 @@ DONE:
             }
             return true;
         }
-        catch (CudaException)
+        catch (Exception ex) when (ex is CudaException or SEHException)
         {
             output = Array.Empty<byte>();
             return false;
