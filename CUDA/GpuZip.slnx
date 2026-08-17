@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="src/GpuZip.Core/GpuZip.Core.csproj" />
+  <Project Path="src/GpuZip.Cli/GpuZip.Cli.csproj" />
+  <Project Path="src/GpuZip.App/GpuZip.App.csproj" />
+  <Project Path="tests/GpuZip.SelfTest/GpuZip.SelfTest.csproj" />
+  <Project Path="tests/GpuZip.Benchmark/GpuZip.Benchmark.csproj" />
+</Solution>

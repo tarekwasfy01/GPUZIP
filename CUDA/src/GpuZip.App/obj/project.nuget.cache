@@ -1,0 +1,32 @@
+{
+  "version": 2,
+  "dgSpecHash": "efucu5vFKTE=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\tarek\\Desktop\\CUDA\\src\\GpuZip.App\\GpuZip.App.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.web.webview2\\1.0.3179.45\\microsoft.web.webview2.1.0.3179.45.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windows.sdk.buildtools\\10.0.26100.4654\\microsoft.windows.sdk.buildtools.10.0.26100.4654.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windows.sdk.buildtools.msix\\1.7.20250829.1\\microsoft.windows.sdk.buildtools.msix.1.7.20250829.1.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsappsdk\\1.8.260804001\\microsoft.windowsappsdk.1.8.260804001.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsappsdk.ai\\1.8.79\\microsoft.windowsappsdk.ai.1.8.79.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsappsdk.base\\1.8.251216001\\microsoft.windowsappsdk.base.1.8.251216001.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsappsdk.dwrite\\1.8.25122902\\microsoft.windowsappsdk.dwrite.1.8.25122902.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsappsdk.foundation\\1.8.260803002\\microsoft.windowsappsdk.foundation.1.8.260803002.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsappsdk.interactiveexperiences\\1.8.260708001\\microsoft.windowsappsdk.interactiveexperiences.1.8.260708001.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsappsdk.ml\\1.8.2197\\microsoft.windowsappsdk.ml.1.8.2197.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsappsdk.runtime\\1.8.260804001\\microsoft.windowsappsdk.runtime.1.8.260804001.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsappsdk.widgets\\1.8.251231004\\microsoft.windowsappsdk.widgets.1.8.251231004.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsappsdk.winui\\1.8.260803003\\microsoft.windowsappsdk.winui.1.8.260803003.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\system.numerics.tensors\\9.0.0\\system.numerics.tensors.9.0.0.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.netcore.app.ref\\8.0.30\\microsoft.netcore.app.ref.8.0.30.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.30\\microsoft.netcore.app.runtime.win-x64.8.0.30.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\8.0.30\\microsoft.windowsdesktop.app.ref.8.0.30.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.30\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.30.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\8.0.30\\microsoft.aspnetcore.app.ref.8.0.30.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.30\\microsoft.aspnetcore.app.runtime.win-x64.8.0.30.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.netcore.app.crossgen2.win-x64\\8.0.30\\microsoft.netcore.app.crossgen2.win-x64.8.0.30.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\8.0.30\\microsoft.netcore.app.host.win-x64.8.0.30.nupkg.sha512",
+    "C:\\Users\\tarek\\.nuget\\packages\\microsoft.windows.sdk.net.ref\\10.0.19041.57\\microsoft.windows.sdk.net.ref.10.0.19041.57.nupkg.sha512"
+  ],
+  "logs": []
+}
