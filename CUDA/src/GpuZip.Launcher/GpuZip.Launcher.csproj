@@ -6,6 +6,7 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>GPUZIP</AssemblyName>
     <RootNamespace>GpuZip.Launcher</RootNamespace>
   </PropertyGroup>
