@@ -5,6 +5,8 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
 $sevenZipProject = Join-Path $projectRoot 'third_party\7zip\CPP\7zip\Bundles\Alone2'
 $sevenZipExe = Join-Path $sevenZipProject 'b\g_x64\7zz.exe'
+$sevenZipFmProject = Join-Path $projectRoot 'third_party\7zip\CPP\7zip\Bundles\Fm'
+$sevenZipFmExe = Join-Path $sevenZipFmProject 'x64\7zFM.exe'
 $releaseDir = Join-Path $projectRoot 'release\GPUZIP-win-x64'
 
 if (-not (Test-Path $sevenZipExe)) {
@@ -19,6 +21,22 @@ if (-not (Test-Path $sevenZipExe)) {
     }
     finally { Pop-Location }
 }
+
+# Build the original 7-Zip File Manager from the vendored upstream source so the
+# classic 7-Zip GUI remains available inside the GPUZIP distribution.
+if (-not (Test-Path $sevenZipFmExe)) {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (-not (Test-Path $vswhere)) { throw "vswhere.exe was not found; cannot build 7zFM.exe" }
+    $vsInstall = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1)
+    if (-not $vsInstall) { throw "Visual C++ build tools were not found; cannot build 7zFM.exe" }
+    $vsDevCmd = Join-Path $vsInstall 'Common7\Tools\VsDevCmd.bat'
+    if (-not (Test-Path $vsDevCmd)) { throw "VsDevCmd.bat was not found: $vsDevCmd" }
+
+    $buildCommand = "call `"$vsDevCmd`" -no_logo -arch=x64 -host_arch=x64 && cd /d `"$sevenZipFmProject`" && nmake /nologo PLATFORM=x64"
+    & $env:ComSpec /d /c $buildCommand
+    if ($LASTEXITCODE -ne 0) { throw "7-Zip File Manager build failed with exit code $LASTEXITCODE" }
+}
+if (-not (Test-Path $sevenZipFmExe)) { throw "7zFM.exe was not produced: $sevenZipFmExe" }
 
 Copy-Item (Join-Path $projectRoot 'third_party\7zip\DOC\license.txt') (Join-Path $projectRoot '7zip-license.txt') -Force
 
@@ -47,10 +65,13 @@ if ($LASTEXITCODE -ne 0) { throw "WPF desktop publish failed" }
 
 $appExe = Join-Path $releaseDir 'GpuZip.App.exe'
 $publishedSevenZip = Join-Path $releaseDir 'Tools\7zip\7zz.exe'
+$publishedSevenZipFm = Join-Path $releaseDir 'Tools\7zip\7zFM.exe'
 if (-not (Test-Path $appExe)) { throw "Published WPF executable was not found: $appExe" }
 if (-not (Test-Path $publishedSevenZip)) { throw "Bundled 7-Zip executable is missing from publish output" }
+if (-not (Test-Path $publishedSevenZipFm)) { throw "Bundled 7-Zip File Manager is missing from publish output" }
 
 & $sevenZipExe i | Select-Object -First 3
+"7-Zip File Manager: $sevenZipFmExe"
 Get-ChildItem $releaseDir -File -Recurse | Measure-Object -Property Length -Sum | ForEach-Object {
     "Release files: $($_.Count); bytes: $($_.Sum)"
 }
