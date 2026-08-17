@@ -31,11 +31,15 @@ if ($LASTEXITCODE -ne 0) { throw "Core build failed" }
 if ($LASTEXITCODE -ne 0) { throw "Self-test failed" }
 
 if (Test-Path $releaseDir) { Remove-Item -LiteralPath $releaseDir -Recurse -Force }
-& dotnet publish (Join-Path $projectRoot 'src\GpuZip.App\GpuZip.App.csproj') -c Release -r win-x64 --self-contained true -p:Platform=x64 -o $releaseDir --source https://api.nuget.org/v3/index.json
-if ($LASTEXITCODE -ne 0) { throw "WinUI publish failed" }
+& dotnet publish (Join-Path $projectRoot 'src\GpuZip.App\GpuZip.App.csproj') -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishReadyToRun=false -o $releaseDir --source https://api.nuget.org/v3/index.json
+if ($LASTEXITCODE -ne 0) { throw "WPF desktop publish failed" }
+
+$appExe = Join-Path $releaseDir 'GpuZip.App.exe'
+if (-not (Test-Path $appExe)) { throw "Published WPF executable was not found: $appExe" }
+if (-not (Test-Path (Join-Path $releaseDir 'Tools\7zip\7zz.exe'))) { throw "Bundled 7-Zip executable is missing from publish output" }
 
 & $sevenZipExe i | Select-Object -First 3
-Get-ChildItem $releaseDir -File | Measure-Object -Property Length -Sum | ForEach-Object {
+Get-ChildItem $releaseDir -File -Recurse | Measure-Object -Property Length -Sum | ForEach-Object {
     "Release files: $($_.Count); bytes: $($_.Sum)"
 }
-"GPUZIP release: $releaseDir"
+"GPUZIP WPF release: $releaseDir"
