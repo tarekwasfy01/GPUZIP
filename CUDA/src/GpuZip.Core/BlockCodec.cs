@@ -55,7 +55,6 @@ internal sealed class BlockCodec : IDisposable
     public BlockCodec(GpuZipCreateOptions options)
     {
         _options = options;
-
         if (!options.UseCuda)
         {
             _cudaWorkers = [];
@@ -65,26 +64,34 @@ internal sealed class BlockCodec : IDisposable
         var desiredWorkers = options.MaximumPerformance
             ? Math.Clamp(options.MaxParallelism > 0 ? options.MaxParallelism : Environment.ProcessorCount, 1, 4)
             : 1;
-
         var workers = new List<CudaTransformer>(desiredWorkers);
         for (var i = 0; i < desiredWorkers; i++)
         {
             if (!CudaTransformer.TryCreate(out var worker) || worker is null) break;
             workers.Add(worker);
         }
-
         _cudaWorkers = workers.ToArray();
         foreach (var worker in _cudaWorkers) _cudaQueue.Enqueue(worker);
         if (_cudaWorkers.Length > 0) _cudaSlots = new SemaphoreSlim(_cudaWorkers.Length, _cudaWorkers.Length);
     }
 
-    public EncodedBlock Encode(ReadOnlySpan<byte> input)
+    public EncodedBlock Encode(ReadOnlySpan<byte> input, bool containerAware = false)
     {
+        var best = new EncodedBlock([], PayloadCodec.Raw, input.ToArray());
+
+        // MSIX/APPX/ZIP data is already DEFLATE-compressed. Preflate reverses the
+        // existing DEFLATE streams into plaintext + compact reconstruction data,
+        // then Zstd-compresses that representation. Decompression recreates the
+        // original bytes bit-for-bit, so signed MSIX packages keep the same hash.
+        if (containerAware && _options.UseContainerRecompression &&
+            PreflateCodec.TryCompress(input, out var preflate) && preflate.Length < best.Payload.Length)
+        {
+            best = new EncodedBlock([], PayloadCodec.PreflateZstd, preflate);
+        }
+
         var pipelines = _options.MaximumPerformance && _cudaWorkers.Length > 0
             ? GpuFocusedPipelines
             : _options.ThoroughSearch ? ThoroughPipelines : FastPipelines;
-
-        var best = new EncodedBlock([], PayloadCodec.Raw, input.ToArray());
         var scores = new List<(TransformId[] Pipeline, int ProbeLength)>(pipelines.Length);
         var probeQuality = _options.MaximumPerformance ? 1 : Math.Min(2, _options.BrotliQuality);
 
@@ -98,23 +105,15 @@ internal sealed class BlockCodec : IDisposable
         var finalistCount = _options.MaximumPerformance
             ? Math.Min(3, scores.Count)
             : _options.ThoroughSearch ? Math.Min(4, scores.Count) : scores.Count;
+        var finalQuality = _options.MaximumPerformance ? Math.Min(_options.BrotliQuality, 6) : _options.BrotliQuality;
 
-        var finalQuality = _options.MaximumPerformance
-            ? Math.Min(_options.BrotliQuality, 6)
-            : _options.BrotliQuality;
-
-        foreach (var candidate in scores
-                     .OrderBy(value => value.ProbeLength + value.Pipeline.Length)
-                     .Take(finalistCount))
+        foreach (var candidate in scores.OrderBy(value => value.ProbeLength + value.Pipeline.Length).Take(finalistCount))
         {
             var transformed = ApplyPipeline(input, candidate.Pipeline);
             var compressed = CompressBrotli(transformed, finalQuality, 24);
             var candidateSize = compressed.Length + candidate.Pipeline.Length;
             var bestSize = best.Payload.Length + best.Pipeline.Length;
-            if (candidateSize < bestSize)
-            {
-                best = new EncodedBlock(candidate.Pipeline, PayloadCodec.Brotli, compressed);
-            }
+            if (candidateSize < bestSize) best = new EncodedBlock(candidate.Pipeline, PayloadCodec.Brotli, compressed);
         }
 
         return best;
@@ -122,6 +121,12 @@ internal sealed class BlockCodec : IDisposable
 
     public static byte[] Decode(EncodedBlock block, int originalLength)
     {
+        if (block.Codec == PayloadCodec.PreflateZstd)
+        {
+            if (block.Pipeline.Length != 0) throw new InvalidDataException("Preflate blocks cannot contain reversible transforms.");
+            return PreflateCodec.Decompress(block.Payload, originalLength);
+        }
+
         var transformed = block.Codec switch
         {
             PayloadCodec.Raw => block.Payload,
@@ -135,14 +140,12 @@ internal sealed class BlockCodec : IDisposable
 
     private byte[] ApplyPipeline(ReadOnlySpan<byte> input, TransformId[] pipeline)
     {
-        if (pipeline.Length > 0 && input.Length >= 256 * 1024 && IsCudaTransform(pipeline[0]) &&
-            TryCudaTransform(input, pipeline[0], out var current))
+        if (pipeline.Length > 0 && input.Length >= 256 * 1024 && IsCudaTransform(pipeline[0]) && TryCudaTransform(input, pipeline[0], out var current))
         {
             Interlocked.Exchange(ref _cudaUsed, 1);
             for (var i = 1; i < pipeline.Length; i++) current = ReversibleTransforms.Apply(current, pipeline[i]);
             return current;
         }
-
         return ReversibleTransforms.ApplyPipeline(input, pipeline);
     }
 
@@ -150,7 +153,6 @@ internal sealed class BlockCodec : IDisposable
     {
         output = Array.Empty<byte>();
         if (_cudaSlots is null) return false;
-
         _cudaSlots.Wait();
         CudaTransformer? worker = null;
         try
@@ -165,8 +167,7 @@ internal sealed class BlockCodec : IDisposable
         }
     }
 
-    private static bool IsCudaTransform(TransformId transform) =>
-        transform is TransformId.DeltaByte or TransformId.XorByte;
+    private static bool IsCudaTransform(TransformId transform) => transform is TransformId.DeltaByte or TransformId.XorByte;
 
     private static byte[] CompressBrotli(ReadOnlySpan<byte> input, int quality, int window)
     {
