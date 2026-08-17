@@ -1,12 +1,9 @@
 using System.Collections.ObjectModel;
+using System.Windows;
+using System.Windows.Controls;
 using GpuZip.Core;
-using Microsoft.UI;
-using Microsoft.UI.Windowing;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Windows.Graphics;
-using Windows.Storage.Pickers;
-using WinRT.Interop;
+using Microsoft.Win32;
+using WinForms = System.Windows.Forms;
 
 namespace GpuZip.App;
 
@@ -17,104 +14,35 @@ public sealed partial class MainWindow : Window
     private readonly SevenZipService _sevenZip = new();
     private string? _currentArchive;
     private bool _busy;
-    private bool _startupInitialized;
 
     public MainWindow()
     {
-        App.LogStartup("MainWindow constructor entered.");
         InitializeComponent();
-        App.LogStartup("MainWindow XAML initialized.");
-
         InputList.ItemsSource = _inputs;
         ArchiveList.ItemsSource = _entries;
-
-        // Do not call the NVIDIA driver, Mica, or custom title-bar APIs from the
-        // constructor. Native startup failures can terminate WinUI with fail-fast
-        // before a managed exception can be logged.
-        CudaToggle.IsChecked = false;
-        CudaStatusText.Text = "CUDA · available on demand";
-        Activated += MainWindow_Activated;
-        App.LogStartup("MainWindow constructor completed.");
-    }
-
-    private void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
-    {
-        if (_startupInitialized) return;
-        _startupInitialized = true;
-        Activated -= MainWindow_Activated;
-
-        App.LogStartup("MainWindow first activation.");
-        ConfigureWindowSafe();
-        _ = InitializeStatusSafeAsync();
-    }
-
-    private void ConfigureWindowSafe()
-    {
-        try
-        {
-            var handle = WindowNative.GetWindowHandle(this);
-            if (handle == 0)
-            {
-                App.LogStartup("Window handle was zero; skipped AppWindow customization.");
-                return;
-            }
-
-            var windowId = Win32Interop.GetWindowIdFromWindow(handle);
-            var appWindow = AppWindow.GetFromWindowId(windowId);
-            if (appWindow is null)
-            {
-                App.LogStartup("AppWindow lookup returned null; skipped resize.");
-                return;
-            }
-
-            appWindow.Resize(new SizeInt32(1240, 780));
-            App.LogStartup("Window resize completed.");
-        }
-        catch (Exception ex)
-        {
-            App.LogStartup("Non-fatal window customization failure: " + ex);
-        }
-    }
-
-    private async Task InitializeStatusSafeAsync()
-    {
-        // CUDA probing is intentionally NOT performed here. On machines with an
-        // NVIDIA driver this crosses into nvcuda.dll; a bad native call cannot be
-        // recovered by a C# try/catch and can fail-fast the whole GUI. CUDA is
-        // attempted only when the user explicitly enables it for compression.
-        try
-        {
-            CudaToggle.IsEnabled = true;
-            CudaToggle.IsChecked = false;
-            CudaStatusText.Text = "CUDA · off (enable when needed)";
-
-            DetailText.Text = _sevenZip.IsAvailable
-                ? await _sevenZip.VersionAsync()
-                : "Bundled 7-Zip engine not found";
-            App.LogStartup("Background status initialization completed.");
-        }
-        catch (Exception ex)
-        {
-            DetailText.Text = ex.Message;
-            App.LogStartup("Non-fatal status initialization failure: " + ex);
-        }
+        CudaCheck.IsChecked = false;
+        CudaStatusText.Text = "CUDA optional · CPU fallback";
+        DetailText.Text = _sevenZip.IsAvailable ? "Bundled 7-Zip engine ready" : "Bundled 7-Zip engine not found";
+        App.LogStartup("WPF MainWindow initialized without CUDA/WinUI startup dependencies.");
     }
 
     private async void OpenArchive_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new FileOpenPicker();
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-        picker.FileTypeFilter.Add("*");
-        var file = await picker.PickSingleFileAsync();
-        if (file is null) return;
-        await OpenArchiveAsync(file.Path);
+        var dialog = new OpenFileDialog
+        {
+            Title = "Open archive",
+            CheckFileExists = true,
+            Filter = "Archive files|*.gpuz;*.7z;*.zip;*.rar;*.tar;*.gz;*.bz2;*.xz|All files|*.*"
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        await OpenArchiveAsync(dialog.FileName);
     }
 
     private async Task OpenArchiveAsync(string path)
     {
         await RunBusyAsync("Opening archive", async () =>
         {
-            var entries = await LoadArchiveEntriesAsync(path);
+            await LoadArchiveEntriesAsync(path);
             return $"Opened {Path.GetFileName(path)}";
         });
     }
@@ -125,30 +53,31 @@ public sealed partial class MainWindow : Window
             ? await Task.Run(() => GpuZipArchive.List(path))
             : await _sevenZip.ListAsync(path);
         _entries.Clear();
-        foreach (var entry in entries) _entries.Add(new(entry));
+        foreach (var entry in entries) _entries.Add(new ArchiveRow(entry));
         _currentArchive = path;
         ArchiveTitle.Text = Path.GetFileName(path);
         ArchiveSummary.Text = $"{entries.Count:N0} entries";
         return entries;
     }
 
-    private async void AddFiles_Click(object sender, RoutedEventArgs e)
+    private void AddFiles_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new FileOpenPicker();
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-        picker.FileTypeFilter.Add("*");
-        var files = await picker.PickMultipleFilesAsync();
-        foreach (var file in files.Where(file => !_inputs.Contains(file.Path))) _inputs.Add(file.Path);
+        var dialog = new OpenFileDialog
+        {
+            Title = "Add files",
+            CheckFileExists = true,
+            Multiselect = true,
+            Filter = "All files|*.*"
+        };
+        if (dialog.ShowDialog(this) != true) return;
+        foreach (var file in dialog.FileNames.Where(file => !_inputs.Contains(file))) _inputs.Add(file);
         StatusText.Text = $"{_inputs.Count} input items selected";
     }
 
-    private async void AddFolder_Click(object sender, RoutedEventArgs e)
+    private void AddFolder_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new FolderPicker();
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-        picker.FileTypeFilter.Add("*");
-        var folder = await picker.PickSingleFolderAsync();
-        if (folder is not null && !_inputs.Contains(folder.Path)) _inputs.Add(folder.Path);
+        var folder = PickFolder("Select a folder to add");
+        if (folder is not null && !_inputs.Contains(folder)) _inputs.Add(folder);
         StatusText.Text = $"{_inputs.Count} input items selected";
     }
 
@@ -159,15 +88,37 @@ public sealed partial class MainWindow : Window
 
     private async void CreateArchive_Click(object sender, RoutedEventArgs e)
     {
-        if (_inputs.Count == 0) { await ShowMessageAsync("No input", "Add files or a folder first."); return; }
-        var item = (ComboBoxItem)FormatComboBox.SelectedItem;
-        var format = item.Tag?.ToString() ?? "gpuz";
-        var extension = format switch { "gpuz" => ".gpuz", "7z" => ".7z", "zip" => ".zip", "tar" => ".tar", "gzip" => ".gz", "bzip2" => ".bz2", "xz" => ".xz", _ => ".archive" };
-        var picker = new FileSavePicker { SuggestedFileName = "Archive" };
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-        picker.FileTypeChoices.Add(item.Content.ToString(), [extension]);
-        var file = await picker.PickSaveFileAsync();
-        if (file is null) return;
+        if (_inputs.Count == 0)
+        {
+            await ShowMessageAsync("No input", "Add files or a folder first.", true);
+            return;
+        }
+
+        var item = FormatComboBox.SelectedItem as ComboBoxItem;
+        var format = item?.Tag?.ToString() ?? "gpuz";
+        var extension = format switch
+        {
+            "gpuz" => ".gpuz",
+            "7z" => ".7z",
+            "zip" => ".zip",
+            "tar" => ".tar",
+            "gzip" => ".gz",
+            "bzip2" => ".bz2",
+            "xz" => ".xz",
+            _ => ".archive"
+        };
+
+        var label = item?.Content?.ToString() ?? format;
+        var dialog = new SaveFileDialog
+        {
+            Title = "Create archive",
+            FileName = "Archive",
+            DefaultExt = extension,
+            AddExtension = true,
+            OverwritePrompt = true,
+            Filter = $"{label}|*{extension}|All files|*.*"
+        };
+        if (dialog.ShowDialog(this) != true) return;
 
         await RunBusyAsync("Creating archive", async () =>
         {
@@ -175,9 +126,9 @@ public sealed partial class MainWindow : Window
             if (format == "gpuz")
             {
                 var progress = new Progress<ArchiveProgress>(UpdateProgress);
-                result = await GpuZipArchive.CreateAsync(file.Path, _inputs, new()
+                result = await GpuZipArchive.CreateAsync(dialog.FileName, _inputs, new GpuZipCreateOptions
                 {
-                    UseCuda = CudaToggle.IsChecked == true,
+                    UseCuda = CudaCheck.IsChecked == true,
                     ThoroughSearch = true,
                     BlockSize = 4 * 1024 * 1024,
                     BrotliQuality = 11
@@ -185,40 +136,48 @@ public sealed partial class MainWindow : Window
             }
             else
             {
-                result = await _sevenZip.CreateAsync(file.Path, _inputs, format);
+                result = await _sevenZip.CreateAsync(dialog.FileName, _inputs, format);
             }
+
             DetailText.Text = $"{ArchiveRow.FormatSize(result.InputBytes)} → {ArchiveRow.FormatSize(result.OutputBytes)} in {result.Elapsed.TotalSeconds:F2}s · CUDA {result.CudaUsed}";
-            await LoadArchiveEntriesAsync(file.Path);
+            await LoadArchiveEntriesAsync(dialog.FileName);
             return result.Summary;
         });
     }
 
     private async void Extract_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentArchive is null) { await ShowMessageAsync("No archive", "Open an archive first."); return; }
-        var picker = new FolderPicker();
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-        picker.FileTypeFilter.Add("*");
-        var folder = await picker.PickSingleFolderAsync();
+        if (_currentArchive is null)
+        {
+            await ShowMessageAsync("No archive", "Open an archive first.", true);
+            return;
+        }
+
+        var folder = PickFolder("Select extraction destination");
         if (folder is null) return;
         await RunBusyAsync("Extracting", async () =>
         {
             var result = GpuZipArchive.IsGpuZip(_currentArchive)
-                ? await GpuZipArchive.ExtractAsync(_currentArchive, folder.Path, new Progress<ArchiveProgress>(UpdateProgress))
-                : await _sevenZip.ExtractAsync(_currentArchive, folder.Path);
+                ? await GpuZipArchive.ExtractAsync(_currentArchive, folder, new Progress<ArchiveProgress>(UpdateProgress))
+                : await _sevenZip.ExtractAsync(_currentArchive, folder);
             return result.Summary;
         });
     }
 
     private async void Test_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentArchive is null) { await ShowMessageAsync("No archive", "Open an archive first."); return; }
+        if (_currentArchive is null)
+        {
+            await ShowMessageAsync("No archive", "Open an archive first.", true);
+            return;
+        }
+
         await RunBusyAsync("Testing archive", async () =>
         {
             var result = GpuZipArchive.IsGpuZip(_currentArchive)
                 ? await GpuZipArchive.TestAsync(_currentArchive, new Progress<ArchiveProgress>(UpdateProgress))
                 : await _sevenZip.TestAsync(_currentArchive);
-            await ShowMessageAsync("Archive test passed", result.Summary);
+            await ShowMessageAsync("Archive test passed", result.Summary, false);
             return result.Summary;
         });
     }
@@ -235,10 +194,12 @@ public sealed partial class MainWindow : Window
         if (_busy) return;
         _busy = true;
         StatusText.Text = operation;
+        OperationProgress.Value = 0;
         OperationProgress.IsIndeterminate = true;
         try
         {
             StatusText.Text = await action();
+            OperationProgress.IsIndeterminate = false;
             OperationProgress.Value = 100;
         }
         catch (Exception ex)
@@ -246,7 +207,7 @@ public sealed partial class MainWindow : Window
             StatusText.Text = $"{operation} failed";
             DetailText.Text = ex.Message;
             App.LogStartup($"{operation} failed: {ex}");
-            await ShowMessageAsync("Operation failed", ex.Message);
+            await ShowMessageAsync("Operation failed", ex.Message, true);
         }
         finally
         {
@@ -255,9 +216,21 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task ShowMessageAsync(string title, string message)
+    private static string? PickFolder(string description)
     {
-        var dialog = new ContentDialog { Title = title, Content = message, CloseButtonText = "OK", XamlRoot = Content.XamlRoot };
-        await dialog.ShowAsync();
+        using var dialog = new WinForms.FolderBrowserDialog
+        {
+            Description = description,
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = true
+        };
+        return dialog.ShowDialog() == WinForms.DialogResult.OK ? dialog.SelectedPath : null;
+    }
+
+    private Task ShowMessageAsync(string title, string message, bool error)
+    {
+        MessageBox.Show(this, message, title, MessageBoxButton.OK,
+            error ? MessageBoxImage.Error : MessageBoxImage.Information);
+        return Task.CompletedTask;
     }
 }
