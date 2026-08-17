@@ -9,10 +9,28 @@ public sealed class SevenZipService
     public SevenZipService(string? executablePath = null)
     {
         ExecutablePath = executablePath ?? FindExecutable();
+        FileManagerPath = FindFileManager();
     }
 
     public string ExecutablePath { get; }
+    public string FileManagerPath { get; }
     public bool IsAvailable => File.Exists(ExecutablePath);
+    public bool IsFileManagerAvailable => File.Exists(FileManagerPath);
+
+    public void OpenFileManager(string? archivePath = null)
+    {
+        if (!IsFileManagerAvailable)
+            throw new FileNotFoundException("Bundled 7zFM.exe was not found.", FileManagerPath);
+
+        var start = new ProcessStartInfo(FileManagerPath)
+        {
+            UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(FileManagerPath) ?? AppContext.BaseDirectory
+        };
+        if (!string.IsNullOrWhiteSpace(archivePath) && File.Exists(archivePath))
+            start.ArgumentList.Add(archivePath);
+        _ = Process.Start(start) ?? throw new InvalidOperationException("Could not start the 7-Zip File Manager.");
+    }
 
     public async Task<IReadOnlyList<ArchiveEntryInfo>> ListAsync(string archivePath, CancellationToken cancellationToken = default)
     {
@@ -158,6 +176,17 @@ public sealed class SevenZipService
             Path.Combine(AppContext.BaseDirectory, "Tools", "7zip", "7zz.exe"),
             Path.Combine(AppContext.BaseDirectory, "7zz.exe"),
             Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "third_party", "7zip", "CPP", "7zip", "Bundles", "Alone2", "b", "g_x64", "7zz.exe"))
+        };
+        return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
+    }
+
+    private static string FindFileManager()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "Tools", "7zip", "7zFM.exe"),
+            Path.Combine(AppContext.BaseDirectory, "7zFM.exe"),
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "third_party", "7zip", "CPP", "7zip", "Bundles", "Fm", "x64", "7zFM.exe"))
         };
         return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
     }
