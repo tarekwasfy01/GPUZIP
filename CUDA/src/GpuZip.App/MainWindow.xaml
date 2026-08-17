@@ -23,6 +23,7 @@
         <Menu Grid.Row="0" Background="#F0F0F0" BorderBrush="#D0D0D0" BorderThickness="0,0,0,1">
             <MenuItem Header="_File">
                 <MenuItem Header="Open archive..." Click="OpenArchive_Click" />
+                <MenuItem Header="Open original 7-Zip File Manager" Click="OpenSevenZipGui_Click" />
                 <Separator />
                 <MenuItem Header="Create archive..." Click="CreateArchive_Click" />
             </MenuItem>
@@ -63,40 +64,46 @@
                 </StackPanel>
 
                 <WrapPanel VerticalAlignment="Center">
-                    <Button Width="76" Height="52" Margin="2" Click="AddFiles_Click">
+                    <Button Width="70" Height="52" Margin="2" Click="AddFiles_Click">
                         <StackPanel>
                             <TextBlock Text="+" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center" />
                             <TextBlock Text="Add" HorizontalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                    <Button Width="76" Height="52" Margin="2" Click="Extract_Click">
+                    <Button Width="70" Height="52" Margin="2" Click="Extract_Click">
                         <StackPanel>
                             <TextBlock Text="↓" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center" />
                             <TextBlock Text="Extract" HorizontalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                    <Button Width="76" Height="52" Margin="2" Click="Test_Click">
+                    <Button Width="70" Height="52" Margin="2" Click="Test_Click">
                         <StackPanel>
                             <TextBlock Text="✓" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center" />
                             <TextBlock Text="Test" HorizontalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                    <Button Width="76" Height="52" Margin="2" Click="OpenArchive_Click">
+                    <Button Width="70" Height="52" Margin="2" Click="OpenArchive_Click">
                         <StackPanel>
                             <TextBlock Text="⌂" FontSize="20" HorizontalAlignment="Center" />
                             <TextBlock Text="Open" HorizontalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                    <Button Width="76" Height="52" Margin="2" Click="AddFolder_Click">
+                    <Button Width="70" Height="52" Margin="2" Click="AddFolder_Click">
                         <StackPanel>
                             <TextBlock Text="▣" FontSize="20" HorizontalAlignment="Center" />
                             <TextBlock Text="Folder" HorizontalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                    <Button Width="92" Height="52" Margin="2" Click="CreateArchive_Click">
+                    <Button Width="86" Height="52" Margin="2" Click="CreateArchive_Click">
                         <StackPanel>
                             <TextBlock Text="⚡" FontSize="18" HorizontalAlignment="Center" />
                             <TextBlock Text="Compress" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button Width="90" Height="52" Margin="2" Click="OpenSevenZipGui_Click" ToolTip="Open the original 7-Zip File Manager bundled with GPUZIP">
+                        <StackPanel>
+                            <TextBlock Text="7z" FontSize="17" FontWeight="Bold" HorizontalAlignment="Center" />
+                            <TextBlock Text="7-Zip GUI" HorizontalAlignment="Center" />
                         </StackPanel>
                     </Button>
                 </WrapPanel>
