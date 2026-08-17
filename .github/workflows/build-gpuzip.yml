@@ -30,30 +30,42 @@ jobs:
       - name: Show .NET info
         run: dotnet --info
 
-      - name: Build release
+      - name: Build reliable WinUI payload
         shell: pwsh
         working-directory: CUDA
         run: ./build-release.ps1
 
-      - name: Prepare OneFile artifact
+      - name: Pack WinUI payload
         shell: pwsh
         run: |
-          $releaseDir = "CUDA/release/GPUZIP-win-x64"
+          $releaseDir = Resolve-Path "CUDA/release/GPUZIP-win-x64"
+          $payload = "CUDA/src/GpuZip.Launcher/payload.zip"
+          if (Test-Path $payload) { Remove-Item $payload -Force }
+          Compress-Archive -Path "$releaseDir\*" -DestinationPath $payload -CompressionLevel Optimal
+          $p = Get-Item $payload
+          Write-Host "Embedded payload: $($p.FullName)"
+          Write-Host "Payload size: $($p.Length) bytes"
+
+      - name: Build self-extracting OneFile launcher
+        shell: pwsh
+        run: |
           $outDir = "artifact"
+          if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-          $exe = Get-ChildItem -Path $releaseDir -Filter "GpuZip.App.exe" -File | Select-Object -First 1
-          if (-not $exe) {
-            $exe = Get-ChildItem -Path $releaseDir -Filter "*.exe" -File | Where-Object { $_.Name -ne "7zz.exe" } | Select-Object -First 1
-          }
-          if (-not $exe) {
-            throw "No application executable was produced."
-          }
+          dotnet publish "CUDA/src/GpuZip.Launcher/GpuZip.Launcher.csproj" `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -o $outDir
+          if ($LASTEXITCODE -ne 0) { throw "OneFile launcher publish failed" }
 
-          Copy-Item -LiteralPath $exe.FullName -Destination "$outDir/GPUZIP.exe" -Force
-          $final = Get-Item "$outDir/GPUZIP.exe"
-          Write-Host "Final OneFile executable: $($final.FullName)"
-          Write-Host "Size: $($final.Length) bytes"
+          $exe = Get-Item "$outDir/GPUZIP.exe"
+          Write-Host "Final executable: $($exe.FullName)"
+          Write-Host "Final size: $($exe.Length) bytes"
 
       - name: Generate GitHub artifact attestation
         uses: actions/attest@v4
