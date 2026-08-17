@@ -62,13 +62,22 @@ public sealed class SevenZipService
         var normalizedFormat = NormalizeFormat(format);
         if (normalizedFormat is "gzip" or "bzip2" or "xz" && (inputList.Count != 1 || !File.Exists(inputList[0])))
             throw new ArgumentException($"{normalizedFormat} is a single-stream format and requires exactly one file.", nameof(inputs));
-        var args = new List<string> { "a", "-y", $"-t{normalizedFormat}", "-mx=9", "--", archivePath };
+
+        var args = new List<string>
+        {
+            "a", "-y", $"-t{normalizedFormat}", "-mx=9", "-mmt=on"
+        };
+        if (normalizedFormat == "7z") args.Add("-m0=lzma2");
+        args.Add("--");
+        args.Add(archivePath);
         args.AddRange(inputList);
-        var result = await RunAsync(args, null, cancellationToken).ConfigureAwait(false);
+
+        var result = await RunAsync(args, null, cancellationToken, highPriority: true).ConfigureAwait(false);
         EnsureSuccess(result, "create");
         stopwatch.Stop();
         var inputBytes = inputList.Sum(GetPathSize);
-        return new(inputList.Count, inputBytes, new FileInfo(archivePath).Length, stopwatch.Elapsed, false, result.Output.Trim());
+        return new(inputList.Count, inputBytes, new FileInfo(archivePath).Length, stopwatch.Elapsed, false,
+            $"7-Zip maximum compression completed with multithreading enabled. {result.Output.Trim()}");
     }
 
     public async Task<ArchiveOperationResult> ExtractAsync(string archivePath, string destination, CancellationToken cancellationToken = default)
@@ -97,7 +106,11 @@ public sealed class SevenZipService
         return result.Output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "7-Zip";
     }
 
-    private async Task<ProcessResult> RunAsync(IEnumerable<string> arguments, string? workingDirectory, CancellationToken cancellationToken)
+    private async Task<ProcessResult> RunAsync(
+        IEnumerable<string> arguments,
+        string? workingDirectory,
+        CancellationToken cancellationToken,
+        bool highPriority = false)
     {
         if (!IsAvailable) throw new FileNotFoundException("Bundled 7zz.exe was not found.", ExecutablePath);
         var start = new ProcessStartInfo(ExecutablePath)
@@ -112,6 +125,10 @@ public sealed class SevenZipService
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start 7-Zip.");
+        if (highPriority)
+        {
+            try { process.PriorityClass = ProcessPriorityClass.High; } catch { }
+        }
         var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
