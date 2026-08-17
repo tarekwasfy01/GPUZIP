@@ -35,6 +35,27 @@ jobs:
         working-directory: CUDA
         run: ./build-release.ps1
 
+      - name: Smoke-test WinUI startup
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path "CUDA/release/GPUZIP-win-x64/GpuZip.App.exe"
+          Write-Host "Starting GUI smoke test: $exe"
+          $p = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+          Start-Sleep -Seconds 8
+
+          if ($p.HasExited) {
+            $code = $p.ExitCode
+            $log = Join-Path $env:LOCALAPPDATA "GPUZIP/app-startup.log"
+            if (Test-Path $log) {
+              Write-Host "--- app-startup.log ---"
+              Get-Content $log
+            }
+            throw "GpuZip.App.exe exited during startup smoke test with code $code"
+          }
+
+          Write-Host "GUI remained alive for 8 seconds; startup smoke test passed."
+          Stop-Process -Id $p.Id -Force
+
       - name: Pack WinUI payload
         shell: pwsh
         run: |
