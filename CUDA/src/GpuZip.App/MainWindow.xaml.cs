@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -20,10 +21,13 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         InputList.ItemsSource = _inputs;
         ArchiveList.ItemsSource = _entries;
-        CudaCheck.IsChecked = false;
-        CudaStatusText.Text = "CUDA optional · CPU fallback";
-        DetailText.Text = _sevenZip.IsAvailable ? "Bundled 7-Zip engine ready" : "Bundled 7-Zip engine not found";
-        App.LogStartup("WPF MainWindow initialized without CUDA/WinUI startup dependencies.");
+        CudaCheck.IsChecked = true;
+        MaximumPerformanceCheck.IsChecked = true;
+        CudaStatusText.Text = "CUDA enabled · CPU fallback";
+        DetailText.Text = _sevenZip.IsAvailable
+            ? $"Bundled 7-Zip engine ready · {Environment.ProcessorCount} logical CPU cores"
+            : "Bundled 7-Zip engine not found";
+        App.LogStartup("Classic WPF file manager initialized; CUDA remains deferred until compression.");
     }
 
     private async void OpenArchive_Click(object sender, RoutedEventArgs e)
@@ -55,7 +59,7 @@ public sealed partial class MainWindow : Window
         _entries.Clear();
         foreach (var entry in entries) _entries.Add(new ArchiveRow(entry));
         _currentArchive = path;
-        ArchiveTitle.Text = Path.GetFileName(path);
+        ArchiveTitle.Text = path;
         ArchiveSummary.Text = $"{entries.Count:N0} entries";
         return entries;
     }
@@ -122,26 +126,55 @@ public sealed partial class MainWindow : Window
 
         await RunBusyAsync("Creating archive", async () =>
         {
-            ArchiveOperationResult result;
-            if (format == "gpuz")
+            var maximumPerformance = MaximumPerformanceCheck.IsChecked == true;
+            var process = Process.GetCurrentProcess();
+            ProcessPriorityClass? previousPriority = null;
+            if (maximumPerformance)
             {
-                var progress = new Progress<ArchiveProgress>(UpdateProgress);
-                result = await GpuZipArchive.CreateAsync(dialog.FileName, _inputs, new GpuZipCreateOptions
+                try
                 {
-                    UseCuda = CudaCheck.IsChecked == true,
-                    ThoroughSearch = true,
-                    BlockSize = 4 * 1024 * 1024,
-                    BrotliQuality = 11
-                }, progress);
-            }
-            else
-            {
-                result = await _sevenZip.CreateAsync(dialog.FileName, _inputs, format);
+                    previousPriority = process.PriorityClass;
+                    process.PriorityClass = ProcessPriorityClass.High;
+                }
+                catch { }
             }
 
-            DetailText.Text = $"{ArchiveRow.FormatSize(result.InputBytes)} → {ArchiveRow.FormatSize(result.OutputBytes)} in {result.Elapsed.TotalSeconds:F2}s · CUDA {result.CudaUsed}";
-            await LoadArchiveEntriesAsync(dialog.FileName);
-            return result.Summary;
+            try
+            {
+                ArchiveOperationResult result;
+                if (format == "gpuz")
+                {
+                    DetailText.Text = maximumPerformance
+                        ? $"Maximum performance · {Environment.ProcessorCount} CPU workers requested · CUDA {(CudaCheck.IsChecked == true ? "enabled" : "disabled")}" 
+                        : "Balanced compression mode";
+
+                    var progress = new Progress<ArchiveProgress>(UpdateProgress);
+                    result = await GpuZipArchive.CreateAsync(dialog.FileName, _inputs, new GpuZipCreateOptions
+                    {
+                        UseCuda = CudaCheck.IsChecked == true,
+                        ThoroughSearch = true,
+                        MaximumPerformance = maximumPerformance,
+                        MaxParallelism = maximumPerformance ? Environment.ProcessorCount : 1,
+                        BlockSize = 4 * 1024 * 1024,
+                        BrotliQuality = 11
+                    }, progress);
+                }
+                else
+                {
+                    result = await _sevenZip.CreateAsync(dialog.FileName, _inputs, format);
+                }
+
+                DetailText.Text = $"{ArchiveRow.FormatSize(result.InputBytes)} → {ArchiveRow.FormatSize(result.OutputBytes)} in {result.Elapsed.TotalSeconds:F2}s · CUDA {result.CudaUsed}";
+                await LoadArchiveEntriesAsync(dialog.FileName);
+                return result.Summary;
+            }
+            finally
+            {
+                if (previousPriority.HasValue)
+                {
+                    try { process.PriorityClass = previousPriority.Value; } catch { }
+                }
+            }
         });
     }
 
