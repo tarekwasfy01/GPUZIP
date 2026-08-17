@@ -23,6 +23,24 @@ public static class GpuZipArchive
         var items = EnumerateInputs(inputPaths).ToList();
         if (items.Count == 0) throw new ArgumentException("At least one existing file or directory is required.", nameof(inputPaths));
 
+        var requestedParallelism = options.MaximumPerformance
+            ? (options.MaxParallelism > 0 ? options.MaxParallelism : Environment.ProcessorCount)
+            : 1;
+        requestedParallelism = Math.Max(1, requestedParallelism);
+
+        // Keep enough memory headroom for Brotli plus transform buffers while still
+        // allowing all CPU cores to work on systems with sufficient RAM.
+        var availableMemory = Math.Max(512L * 1024 * 1024, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes);
+        var estimatedPerWorker = Math.Max(32L * 1024 * 1024, options.BlockSize * 12L);
+        var memoryParallelism = Math.Max(1, (int)Math.Min(int.MaxValue, availableMemory / estimatedPerWorker));
+        var parallelism = Math.Max(1, Math.Min(requestedParallelism, memoryParallelism));
+
+        if (options.MaximumPerformance)
+        {
+            ThreadPool.GetMinThreads(out var currentWorkers, out var currentIo);
+            _ = ThreadPool.SetMinThreads(Math.Max(currentWorkers, parallelism * 2), currentIo);
+        }
+
         var stopwatch = Stopwatch.StartNew();
         long inputBytes = 0;
         await using var stream = new FileStream(archivePath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true);
@@ -51,21 +69,53 @@ public static class GpuZipArchive
                 var blockCount = checked((int)((item.Length + options.BlockSize - 1) / options.BlockSize));
                 writer.Write(blockCount);
                 await using var input = new FileStream(item.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, options.BlockSize, true);
-                var buffer = new byte[options.BlockSize];
-                while (true)
+                long fileOffset = 0;
+
+                for (var batchStart = 0; batchStart < blockCount; batchStart += parallelism)
                 {
-                    var read = await ReadBlockAsync(input, buffer, cancellationToken).ConfigureAwait(false);
-                    if (read == 0) break;
-                    var original = buffer.AsMemory(0, read).ToArray();
-                    var encoded = codec.Encode(original);
-                    writer.Write(read);
-                    writer.Write((byte)encoded.Codec);
-                    writer.Write((byte)encoded.Pipeline.Length);
-                    foreach (var transform in encoded.Pipeline) writer.Write((byte)transform);
-                    writer.Write(encoded.Payload.Length);
-                    writer.Write(SHA256.HashData(original));
-                    writer.Write(encoded.Payload);
-                    inputBytes += read;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var batchCount = Math.Min(parallelism, blockCount - batchStart);
+                    var originals = new byte[batchCount][];
+
+                    for (var i = 0; i < batchCount; i++)
+                    {
+                        var expectedLength = checked((int)Math.Min(options.BlockSize, item.Length - fileOffset));
+                        var original = new byte[expectedLength];
+                        var read = await ReadBlockAsync(input, original, cancellationToken).ConfigureAwait(false);
+                        if (read != expectedLength) throw new EndOfStreamException($"Unexpected end of input file: {item.SourcePath}");
+                        originals[i] = original;
+                        fileOffset += read;
+                    }
+
+                    var encodedBlocks = new EncodedBlock[batchCount];
+                    await Parallel.ForEachAsync(
+                        Enumerable.Range(0, batchCount),
+                        new ParallelOptions
+                        {
+                            MaxDegreeOfParallelism = parallelism,
+                            CancellationToken = cancellationToken
+                        },
+                        (index, _) =>
+                        {
+                            encodedBlocks[index] = codec.Encode(originals[index]);
+                            return ValueTask.CompletedTask;
+                        }).ConfigureAwait(false);
+
+                    // Archive metadata remains ordered even though the expensive work above
+                    // is parallel, so the on-disk format stays deterministic and compatible.
+                    for (var i = 0; i < batchCount; i++)
+                    {
+                        var original = originals[i];
+                        var encoded = encodedBlocks[i];
+                        writer.Write(original.Length);
+                        writer.Write((byte)encoded.Codec);
+                        writer.Write((byte)encoded.Pipeline.Length);
+                        foreach (var transform in encoded.Pipeline) writer.Write((byte)transform);
+                        writer.Write(encoded.Payload.Length);
+                        writer.Write(SHA256.HashData(original));
+                        writer.Write(encoded.Payload);
+                        inputBytes += original.Length;
+                    }
                 }
             }
 
@@ -76,7 +126,7 @@ public static class GpuZipArchive
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         stopwatch.Stop();
         return new(items.Count, inputBytes, stream.Length, stopwatch.Elapsed, codec.CudaUsed,
-            $"Created {items.Count} entries using adaptive reversible pipelines.");
+            $"Created {items.Count} entries using adaptive reversible pipelines with up to {parallelism} parallel workers.");
     }
 
     public static IReadOnlyList<ArchiveEntryInfo> List(string archivePath)
