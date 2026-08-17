@@ -3,7 +3,9 @@
   <assemblyIdentity version="1.0.0.0" name="GpuZip.App"/>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
-      <supportedOS Id="{4f476546-937b-4b5b-8cb0-4f6e6f65f8b7}"/>
+      <!-- Windows 10 and Windows 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <maxversiontested Id="10.0.26100.0"/>
     </application>
   </compatibility>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
