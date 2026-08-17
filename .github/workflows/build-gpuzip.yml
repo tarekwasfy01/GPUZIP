@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - "CUDA/**"
+      - "global.json"
       - ".github/workflows/build-gpuzip.yml"
 
 permissions:
@@ -22,41 +23,52 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup .NET 8
+      - name: Setup pinned .NET 8 SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "8.0.424"
 
-      - name: Show .NET info
-        run: dotnet --info
+      - name: Verify .NET SDK
+        shell: pwsh
+        run: |
+          dotnet --version
+          dotnet --info
+          $version = dotnet --version
+          if (-not $version.StartsWith("8.0.")) {
+            throw "GPUZIP must be built with .NET 8, but dotnet selected $version"
+          }
 
-      - name: Build reliable WinUI payload
+      - name: Build reliable WPF payload
         shell: pwsh
         working-directory: CUDA
         run: ./build-release.ps1
 
-      - name: Smoke-test WinUI startup
+      - name: Smoke-test WPF payload startup
         shell: pwsh
         run: |
           $exe = Resolve-Path "CUDA/release/GPUZIP-win-x64/GpuZip.App.exe"
-          Write-Host "Starting GUI smoke test: $exe"
+          $logDir = Join-Path $env:LOCALAPPDATA "GPUZIP"
+          if (Test-Path $logDir) { Remove-Item $logDir -Recurse -Force }
+          Write-Host "Starting WPF payload smoke test: $exe"
           $p = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
-          Start-Sleep -Seconds 8
+          Start-Sleep -Seconds 10
+          $p.Refresh()
 
           if ($p.HasExited) {
             $code = $p.ExitCode
-            $log = Join-Path $env:LOCALAPPDATA "GPUZIP/app-startup.log"
-            if (Test-Path $log) {
-              Write-Host "--- app-startup.log ---"
-              Get-Content $log
+            if (Test-Path $logDir) {
+              Get-ChildItem $logDir -File -ErrorAction SilentlyContinue | ForEach-Object {
+                Write-Host "--- $($_.Name) ---"
+                Get-Content $_.FullName -ErrorAction SilentlyContinue
+              }
             }
-            throw "GpuZip.App.exe exited during startup smoke test with code $code"
+            throw "GpuZip.App.exe exited during WPF startup smoke test with code $code"
           }
 
-          Write-Host "GUI remained alive for 8 seconds; startup smoke test passed."
+          Write-Host "WPF GUI remained alive for 10 seconds; payload startup passed."
           Stop-Process -Id $p.Id -Force
 
-      - name: Pack WinUI payload
+      - name: Pack WPF payload
         shell: pwsh
         run: |
           $releaseDir = Resolve-Path "CUDA/release/GPUZIP-win-x64"
@@ -79,6 +91,7 @@ jobs:
             -r win-x64 `
             --self-contained true `
             -p:PublishSingleFile=true `
+            -p:PublishReadyToRun=false `
             -p:DebugType=None `
             -p:DebugSymbols=false `
             -o $outDir
@@ -87,6 +100,69 @@ jobs:
           $exe = Get-Item "$outDir/GPUZIP.exe"
           Write-Host "Final executable: $($exe.FullName)"
           Write-Host "Final size: $($exe.Length) bytes"
+
+      - name: Smoke-test final OneFile executable
+        shell: pwsh
+        run: |
+          $logDir = Join-Path $env:LOCALAPPDATA "GPUZIP"
+          if (Test-Path $logDir) { Remove-Item $logDir -Recurse -Force }
+          Get-Process -Name "GpuZip.App" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+          $exe = Resolve-Path "artifact/GPUZIP.exe"
+          Write-Host "Starting final OneFile smoke test: $exe"
+          $launcher = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+          Start-Sleep -Seconds 12
+          $launcher.Refresh()
+
+          if (-not $launcher.HasExited) {
+            Stop-Process -Id $launcher.Id -Force -ErrorAction SilentlyContinue
+            throw "GPUZIP launcher did not finish its startup handoff within 12 seconds"
+          }
+          if ($launcher.ExitCode -ne 0) {
+            if (Test-Path $logDir) {
+              Get-ChildItem $logDir -File -ErrorAction SilentlyContinue | ForEach-Object {
+                Write-Host "--- $($_.Name) ---"
+                Get-Content $_.FullName -ErrorAction SilentlyContinue
+              }
+            }
+            throw "Final GPUZIP.exe returned startup error $($launcher.ExitCode)"
+          }
+
+          $app = Get-Process -Name "GpuZip.App" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $app) {
+            if (Test-Path $logDir) {
+              Get-ChildItem $logDir -File -ErrorAction SilentlyContinue | ForEach-Object {
+                Write-Host "--- $($_.Name) ---"
+                Get-Content $_.FullName -ErrorAction SilentlyContinue
+              }
+            }
+            throw "Final GPUZIP.exe exited successfully but no GpuZip.App process remained running"
+          }
+
+          Write-Host "Final OneFile extraction + launcher handoff + WPF startup passed."
+          Stop-Process -Id $app.Id -Force
+
+      - name: Collect startup diagnostics on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path diagnostics | Out-Null
+          $logDir = Join-Path $env:LOCALAPPDATA "GPUZIP"
+          if (Test-Path $logDir) {
+            Get-ChildItem $logDir -File -ErrorAction SilentlyContinue | Copy-Item -Destination diagnostics -Force
+          }
+          Get-ChildItem diagnostics -File -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "Collected diagnostic: $($_.Name)"
+          }
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GPUZIP-startup-diagnostics
+          path: diagnostics
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Generate GitHub artifact attestation
         uses: actions/attest@v4
