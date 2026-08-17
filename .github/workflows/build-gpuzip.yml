@@ -168,7 +168,33 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Generate GitHub artifact attestation
+      - name: Generate GitHub artifact attestation - attempt 1
+        id: attest1
+        continue-on-error: true
+        uses: actions/attest@v4
+        with:
+          subject-path: artifact/GPUZIP.exe
+
+      - name: Wait before attestation retry 2
+        if: steps.attest1.outcome == 'failure'
+        shell: pwsh
+        run: Start-Sleep -Seconds 20
+
+      - name: Generate GitHub artifact attestation - attempt 2
+        id: attest2
+        if: steps.attest1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/attest@v4
+        with:
+          subject-path: artifact/GPUZIP.exe
+
+      - name: Wait before attestation retry 3
+        if: steps.attest1.outcome == 'failure' && steps.attest2.outcome == 'failure'
+        shell: pwsh
+        run: Start-Sleep -Seconds 30
+
+      - name: Generate GitHub artifact attestation - attempt 3
+        if: steps.attest1.outcome == 'failure' && steps.attest2.outcome == 'failure'
         uses: actions/attest@v4
         with:
           subject-path: artifact/GPUZIP.exe
