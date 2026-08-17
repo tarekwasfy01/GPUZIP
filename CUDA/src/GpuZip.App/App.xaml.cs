@@ -1,35 +1,56 @@
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
+using System.Windows;
 
 namespace GpuZip.App;
 
 public partial class App : Application
 {
-    private Window? _window;
-
     public App()
     {
-        LogStartup("App constructor entered.");
+        DispatcherUnhandledException += (_, args) =>
+        {
+            LogStartup("Unhandled WPF exception: " + args.Exception);
+            MessageBox.Show(
+                "GPUZIP encountered an unexpected UI error.\n\n" + args.Exception.Message +
+                "\n\nDetails: %LOCALAPPDATA%\\GPUZIP\\app-startup.log",
+                "GPUZIP error",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            args.Handled = true;
+        };
+
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            LogStartup("Unhandled AppDomain exception: " + args.ExceptionObject);
+        };
+
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            LogStartup("Unobserved task exception: " + args.Exception);
+            args.SetObserved();
+        };
+    }
+
+    private void Application_Startup(object sender, StartupEventArgs e)
+    {
+        LogStartup("WPF application startup entered.");
         try
         {
-            InitializeComponent();
-            LogStartup("App XAML initialized.");
+            var window = new MainWindow();
+            MainWindow = window;
+            window.Show();
+            LogStartup("MainWindow shown successfully.");
         }
         catch (Exception ex)
         {
-            LogStartup("App InitializeComponent failed: " + ex);
-            throw;
+            LogStartup("MainWindow startup failed: " + ex);
+            MessageBox.Show(
+                "GPUZIP could not initialize its main window.\n\n" + ex.Message +
+                "\n\nDetails: %LOCALAPPDATA%\\GPUZIP\\app-startup.log",
+                "GPUZIP startup error",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Shutdown(1);
         }
-
-        UnhandledException += (_, args) =>
-        {
-            LogStartup("Unhandled WinUI exception: " + args.Exception);
-
-            // WinUI otherwise turns many unhandled UI exceptions into a native
-            // fail-fast termination. Keep the process alive where possible and
-            // leave diagnostics on disk rather than disappearing silently.
-            args.Handled = true;
-        };
     }
 
     internal static void LogStartup(string message)
@@ -46,55 +67,7 @@ public partial class App : Application
         }
         catch
         {
-            // Startup diagnostics must never become a startup dependency.
-        }
-    }
-
-    protected override void OnLaunched(LaunchActivatedEventArgs args)
-    {
-        LogStartup("OnLaunched entered.");
-        try
-        {
-            _window = new MainWindow();
-            LogStartup("MainWindow created.");
-            _window.Activate();
-            LogStartup("MainWindow activated.");
-        }
-        catch (Exception ex)
-        {
-            LogStartup("MainWindow startup failed: " + ex);
-
-            // If the full UI has a managed initialization problem, show a tiny
-            // fallback window instead of terminating with no visible error.
-            try
-            {
-                _window = new Window
-                {
-                    Title = "GPUZIP startup diagnostics",
-                    Content = new Grid
-                    {
-                        Padding = new Thickness(24),
-                        Children =
-                        {
-                            new TextBlock
-                            {
-                                Text = "GPUZIP could not initialize its main window.\n\n" +
-                                       ex.Message +
-                                       "\n\nDetails were written to %LOCALAPPDATA%\\GPUZIP\\app-startup.log",
-                                TextWrapping = TextWrapping.Wrap,
-                                MaxWidth = 720
-                            }
-                        }
-                    }
-                };
-                _window.Activate();
-                LogStartup("Fallback diagnostics window activated.");
-            }
-            catch (Exception fallbackEx)
-            {
-                LogStartup("Fallback diagnostics window failed: " + fallbackEx);
-                throw;
-            }
+            // Diagnostics must never become a startup dependency.
         }
     }
 }
