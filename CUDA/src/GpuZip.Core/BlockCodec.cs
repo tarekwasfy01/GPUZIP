@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Threading;
 
 namespace GpuZip.Core;
 
@@ -30,7 +31,9 @@ internal sealed class BlockCodec : IDisposable
 
     private readonly GpuZipCreateOptions _options;
     private readonly CudaTransformer? _cuda;
-    public bool CudaUsed { get; private set; }
+    private int _cudaUsed;
+
+    public bool CudaUsed => Volatile.Read(ref _cudaUsed) != 0;
 
     public BlockCodec(GpuZipCreateOptions options)
     {
@@ -42,34 +45,25 @@ internal sealed class BlockCodec : IDisposable
     {
         var pipelines = _options.ThoroughSearch ? ThoroughPipelines : FastPipelines;
         var best = new EncodedBlock([], PayloadCodec.Raw, input.ToArray());
-        var candidates = new List<(TransformId[] Pipeline, byte[] Transformed, byte[] Probe)>();
+        var scores = new List<(TransformId[] Pipeline, int ProbeLength)>(pipelines.Length);
+        var probeQuality = Math.Min(2, _options.BrotliQuality);
 
+        // First pass: only retain the score. This keeps memory bounded when many
+        // blocks are encoded in parallel on high-core-count machines.
         foreach (var pipeline in pipelines)
         {
-            byte[] transformed;
-            if (pipeline.Length == 1 && input.Length >= 64 * 1024 && _cuda is not null &&
-                _cuda.TryTransform(input, pipeline[0], out transformed))
-            {
-                CudaUsed = true;
-            }
-            else
-            {
-                transformed = ReversibleTransforms.ApplyPipeline(input, pipeline);
-            }
-
-            var probeQuality = Math.Min(2, _options.BrotliQuality);
+            var transformed = ApplyPipeline(input, pipeline);
             var probe = CompressBrotli(transformed, probeQuality, 22);
-            candidates.Add((pipeline, transformed, probe));
+            scores.Add((pipeline, probe.Length));
         }
 
-        var finalistCount = _options.ThoroughSearch ? Math.Min(4, candidates.Count) : candidates.Count;
-        foreach (var candidate in candidates
-                     .OrderBy(value => value.Probe.Length + value.Pipeline.Length)
+        var finalistCount = _options.ThoroughSearch ? Math.Min(4, scores.Count) : scores.Count;
+        foreach (var candidate in scores
+                     .OrderBy(value => value.ProbeLength + value.Pipeline.Length)
                      .Take(finalistCount))
         {
-            var compressed = _options.BrotliQuality <= 2
-                ? candidate.Probe
-                : CompressBrotli(candidate.Transformed, _options.BrotliQuality, 24);
+            var transformed = ApplyPipeline(input, candidate.Pipeline);
+            var compressed = CompressBrotli(transformed, _options.BrotliQuality, 24);
             var candidateSize = compressed.Length + candidate.Pipeline.Length;
             var bestSize = best.Payload.Length + best.Pipeline.Length;
             if (candidateSize < bestSize)
@@ -94,10 +88,20 @@ internal sealed class BlockCodec : IDisposable
         return result;
     }
 
+    private byte[] ApplyPipeline(ReadOnlySpan<byte> input, TransformId[] pipeline)
+    {
+        if (pipeline.Length == 1 && input.Length >= 256 * 1024 && _cuda is not null &&
+            _cuda.TryTransform(input, pipeline[0], out var transformed))
+        {
+            Interlocked.Exchange(ref _cudaUsed, 1);
+            return transformed;
+        }
+
+        return ReversibleTransforms.ApplyPipeline(input, pipeline);
+    }
+
     private static byte[] CompressBrotli(ReadOnlySpan<byte> input, int quality, int window)
     {
-        // Leave extra room for metadata emitted by high-quality modes. Some runtime
-        // versions return a bound that is exact for the default encoder parameters.
         var safetyMargin = Math.Max(64 * 1024, input.Length / 32);
         var maxLength = checked(Math.Max(BrotliEncoder.GetMaxCompressedLength(input.Length), input.Length) + safetyMargin);
         var output = new byte[maxLength];
