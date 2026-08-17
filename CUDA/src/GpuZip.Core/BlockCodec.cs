@@ -75,14 +75,13 @@ internal sealed class BlockCodec : IDisposable
         if (_cudaWorkers.Length > 0) _cudaSlots = new SemaphoreSlim(_cudaWorkers.Length, _cudaWorkers.Length);
     }
 
-    public EncodedBlock Encode(ReadOnlySpan<byte> input, bool containerAware = false)
+    public EncodedBlock Encode(ReadOnlySpan<byte> input, bool containerAware = true)
     {
         var best = new EncodedBlock([], PayloadCodec.Raw, input.ToArray());
 
-        // MSIX/APPX/ZIP data is already DEFLATE-compressed. Preflate reverses the
-        // existing DEFLATE streams into plaintext + compact reconstruction data,
-        // then Zstd-compresses that representation. Decompression recreates the
-        // original bytes bit-for-bit, so signed MSIX packages keep the same hash.
+        // MSIX/APPX/ZIP and other embedded DEFLATE streams can be precompressed
+        // without losing a single source bit. Preflate reconstructs the original
+        // DEFLATE stream exactly, so signed packages retain their original SHA-256.
         if (containerAware && _options.UseContainerRecompression &&
             PreflateCodec.TryCompress(input, out var preflate) && preflate.Length < best.Payload.Length)
         {
