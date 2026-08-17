@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Controls;
 using GpuZip.Core;
 using Microsoft.Win32;
-using WinForms = System.Windows.Forms;
 
 namespace GpuZip.App;
 
@@ -216,15 +215,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static string? PickFolder(string description)
+    private string? PickFolder(string title)
     {
-        using var dialog = new WinForms.FolderBrowserDialog
+        var dialog = new OpenFolderDialog
         {
-            Description = description,
-            UseDescriptionForTitle = true,
-            ShowNewFolderButton = true
+            Title = title,
+            Multiselect = false
         };
-        return dialog.ShowDialog() == WinForms.DialogResult.OK ? dialog.SelectedPath : null;
+        return dialog.ShowDialog(this) == true ? dialog.FolderName : null;
     }
 
     private Task ShowMessageAsync(string title, string message, bool error)
