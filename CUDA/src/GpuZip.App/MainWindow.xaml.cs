@@ -17,42 +17,87 @@ public sealed partial class MainWindow : Window
     private readonly SevenZipService _sevenZip = new();
     private string? _currentArchive;
     private bool _busy;
+    private bool _startupInitialized;
 
     public MainWindow()
     {
+        App.LogStartup("MainWindow constructor entered.");
         InitializeComponent();
+        App.LogStartup("MainWindow XAML initialized.");
+
         InputList.ItemsSource = _inputs;
         ArchiveList.ItemsSource = _entries;
-        ConfigureWindow();
-        _ = InitializeStatusAsync();
+
+        // Do not call the NVIDIA driver, Mica, or custom title-bar APIs from the
+        // constructor. Native startup failures can terminate WinUI with fail-fast
+        // before a managed exception can be logged.
+        CudaToggle.IsChecked = false;
+        CudaStatusText.Text = "CUDA · available on demand";
+        Activated += MainWindow_Activated;
+        App.LogStartup("MainWindow constructor completed.");
     }
 
-    private void ConfigureWindow()
+    private void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
     {
-        var handle = WindowNative.GetWindowHandle(this);
-        var windowId = Win32Interop.GetWindowIdFromWindow(handle);
-        var appWindow = AppWindow.GetFromWindowId(windowId);
-        appWindow.Resize(new SizeInt32(1240, 780));
-        if (AppWindowTitleBar.IsCustomizationSupported())
-        {
-            appWindow.TitleBar.ExtendsContentIntoTitleBar = true;
-            appWindow.TitleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
-            appWindow.TitleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
-        }
-        SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+        if (_startupInitialized) return;
+        _startupInitialized = true;
+        Activated -= MainWindow_Activated;
+
+        App.LogStartup("MainWindow first activation.");
+        ConfigureWindowSafe();
+        _ = InitializeStatusSafeAsync();
     }
 
-    private async Task InitializeStatusAsync()
+    private void ConfigureWindowSafe()
     {
-        var cuda = await Task.Run(GpuZipArchive.GetCudaDeviceInfo);
-        CudaStatusText.Text = cuda.Available ? $"CUDA · {cuda.Name}" : "CPU fallback";
-        CudaToggle.IsEnabled = cuda.Available;
-        CudaToggle.IsChecked = cuda.Available;
         try
         {
-            DetailText.Text = _sevenZip.IsAvailable ? await _sevenZip.VersionAsync() : "Bundled 7-Zip engine not found";
+            var handle = WindowNative.GetWindowHandle(this);
+            if (handle == 0)
+            {
+                App.LogStartup("Window handle was zero; skipped AppWindow customization.");
+                return;
+            }
+
+            var windowId = Win32Interop.GetWindowIdFromWindow(handle);
+            var appWindow = AppWindow.GetFromWindowId(windowId);
+            if (appWindow is null)
+            {
+                App.LogStartup("AppWindow lookup returned null; skipped resize.");
+                return;
+            }
+
+            appWindow.Resize(new SizeInt32(1240, 780));
+            App.LogStartup("Window resize completed.");
         }
-        catch (Exception ex) { DetailText.Text = ex.Message; }
+        catch (Exception ex)
+        {
+            App.LogStartup("Non-fatal window customization failure: " + ex);
+        }
+    }
+
+    private async Task InitializeStatusSafeAsync()
+    {
+        // CUDA probing is intentionally NOT performed here. On machines with an
+        // NVIDIA driver this crosses into nvcuda.dll; a bad native call cannot be
+        // recovered by a C# try/catch and can fail-fast the whole GUI. CUDA is
+        // attempted only when the user explicitly enables it for compression.
+        try
+        {
+            CudaToggle.IsEnabled = true;
+            CudaToggle.IsChecked = false;
+            CudaStatusText.Text = "CUDA · off (enable when needed)";
+
+            DetailText.Text = _sevenZip.IsAvailable
+                ? await _sevenZip.VersionAsync()
+                : "Bundled 7-Zip engine not found";
+            App.LogStartup("Background status initialization completed.");
+        }
+        catch (Exception ex)
+        {
+            DetailText.Text = ex.Message;
+            App.LogStartup("Non-fatal status initialization failure: " + ex);
+        }
     }
 
     private async void OpenArchive_Click(object sender, RoutedEventArgs e)
@@ -200,6 +245,7 @@ public sealed partial class MainWindow : Window
         {
             StatusText.Text = $"{operation} failed";
             DetailText.Text = ex.Message;
+            App.LogStartup($"{operation} failed: {ex}");
             await ShowMessageAsync("Operation failed", ex.Message);
         }
         finally
