@@ -9,6 +9,11 @@ $sevenZipFmProject = Join-Path $projectRoot 'third_party\7zip\CPP\7zip\Bundles\F
 $sevenZipFmExe = Join-Path $sevenZipFmProject 'x64\7zFM.exe'
 $releaseDir = Join-Path $projectRoot 'release\GPUZIP-win-x64'
 
+$preflateCommit = '3bcd33441849a8a25d2b26077128f4e3a88d071b'
+$preflateSource = Join-Path $projectRoot '.build\preflate-rs'
+$preflateDll = Join-Path $preflateSource 'target\release\preflate_rs_0_7.dll'
+$preflateLicense = Join-Path $preflateSource 'LICENSE'
+
 if (-not (Test-Path $sevenZipExe)) {
     Push-Location $sevenZipProject
     try {
@@ -35,6 +40,30 @@ if (-not (Test-Path $sevenZipFmExe)) {
 }
 if (-not (Test-Path $sevenZipFmExe)) { throw "7zFM.exe was not produced: $sevenZipFmExe" }
 
+# Build Microsoft's Apache-2.0 preflate-rs container codec from a pinned commit.
+# It losslessly exposes DEFLATE streams inside ZIP/MSIX so stronger compression
+# can be used while recreating the original container bytes exactly.
+Get-Command git.exe -ErrorAction Stop | Out-Null
+Get-Command cargo.exe -ErrorAction Stop | Out-Null
+Write-Host "Rust: $(& rustc --version)"
+Write-Host "Cargo: $(& cargo --version)"
+
+if (-not (Test-Path (Join-Path $preflateSource '.git'))) {
+    if (Test-Path $preflateSource) { Remove-Item $preflateSource -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path (Split-Path $preflateSource) | Out-Null
+    & git clone --filter=blob:none --no-checkout https://github.com/microsoft/preflate-rs.git $preflateSource
+    if ($LASTEXITCODE -ne 0) { throw "Could not clone microsoft/preflate-rs" }
+}
+& git -C $preflateSource fetch --depth 1 origin $preflateCommit
+if ($LASTEXITCODE -ne 0) { throw "Could not fetch pinned preflate-rs commit" }
+& git -C $preflateSource checkout --force --detach $preflateCommit
+if ($LASTEXITCODE -ne 0) { throw "Could not checkout pinned preflate-rs commit" }
+& cargo build --locked --manifest-path (Join-Path $preflateSource 'Cargo.toml') --release -p preflate_rs_0_7
+if ($LASTEXITCODE -ne 0) { throw "preflate-rs DLL build failed" }
+if (-not (Test-Path $preflateDll)) { throw "preflate_rs_0_7.dll was not produced: $preflateDll" }
+if (-not (Test-Path $preflateLicense)) { throw "preflate-rs LICENSE was not found" }
+$env:GPUZIP_PREFLATE_DLL = $preflateDll
+
 Copy-Item (Join-Path $projectRoot 'third_party\7zip\DOC\license.txt') (Join-Path $projectRoot '7zip-license.txt') -Force
 
 $coreProject = Join-Path $projectRoot 'src\GpuZip.Core\GpuZip.Core.csproj'
@@ -57,19 +86,27 @@ if (Test-Path $releaseDir) { Remove-Item -LiteralPath $releaseDir -Recurse -Forc
 & dotnet publish $appProject -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishReadyToRun=false --no-restore -o $releaseDir
 if ($LASTEXITCODE -ne 0) { throw "WPF desktop publish failed" }
 
-$publishedToolsDir = Join-Path $releaseDir 'Tools\7zip'
-New-Item -ItemType Directory -Force -Path $publishedToolsDir | Out-Null
-Copy-Item $sevenZipFmExe (Join-Path $publishedToolsDir '7zFM.exe') -Force
+$publishedSevenZipDir = Join-Path $releaseDir 'Tools\7zip'
+New-Item -ItemType Directory -Force -Path $publishedSevenZipDir | Out-Null
+Copy-Item $sevenZipFmExe (Join-Path $publishedSevenZipDir '7zFM.exe') -Force
+
+$publishedPreflateDir = Join-Path $releaseDir 'Tools\preflate'
+New-Item -ItemType Directory -Force -Path $publishedPreflateDir | Out-Null
+Copy-Item $preflateDll (Join-Path $publishedPreflateDir 'preflate_rs_0_7.dll') -Force
+Copy-Item $preflateLicense (Join-Path $publishedPreflateDir 'LICENSE.txt') -Force
 
 $appExe = Join-Path $releaseDir 'GpuZip.App.exe'
 $publishedSevenZip = Join-Path $releaseDir 'Tools\7zip\7zz.exe'
 $publishedSevenZipFm = Join-Path $releaseDir 'Tools\7zip\7zFM.exe'
+$publishedPreflate = Join-Path $releaseDir 'Tools\preflate\preflate_rs_0_7.dll'
 if (-not (Test-Path $appExe)) { throw "Published WPF executable was not found: $appExe" }
 if (-not (Test-Path $publishedSevenZip)) { throw "Bundled 7-Zip executable is missing from publish output" }
 if (-not (Test-Path $publishedSevenZipFm)) { throw "Bundled 7-Zip File Manager is missing from publish output" }
+if (-not (Test-Path $publishedPreflate)) { throw "Bundled Preflate codec is missing from publish output" }
 
 & $sevenZipExe i | Select-Object -First 3
 "7-Zip File Manager: $sevenZipFmExe"
+"Preflate codec: $preflateDll"
 Get-ChildItem $releaseDir -File -Recurse | Measure-Object -Property Length -Sum | ForEach-Object {
     "Release files: $($_.Count); bytes: $($_.Sum)"
 }
