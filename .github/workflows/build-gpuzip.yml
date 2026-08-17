@@ -1,4 +1,4 @@
-name: Build GPUZIP Windows x64
+name: Build GPUZIP OneFile Windows x64
 
 on:
   workflow_dispatch:
@@ -25,28 +25,48 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Show .NET info
-        run: dotnet --info
-
       - name: Build release
         shell: pwsh
         working-directory: CUDA
         run: ./build-release.ps1
 
-      - name: Verify executable
+      - name: Collect OneFile EXE
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Path "CUDA/release/GPUZIP-win-x64" -Filter "*.exe" -File | Select-Object -First 1
+          $publish = "CUDA/release/GPUZIP-win-x64"
+          $exe = Get-ChildItem -Path $publish -Filter "GpuZip.App.exe" -File | Select-Object -First 1
           if (-not $exe) {
-            throw "No executable was produced."
+            $exe = Get-ChildItem -Path $publish -Filter "*.exe" -File |
+              Where-Object { $_.Name -ne "7zz.exe" } |
+              Sort-Object Length -Descending |
+              Select-Object -First 1
           }
-          Write-Host "Built executable: $($exe.FullName)"
+          if (-not $exe) {
+            throw "No GPUZIP executable was produced."
+          }
+
+          New-Item -ItemType Directory -Force -Path "artifact" | Out-Null
+          Copy-Item $exe.FullName "artifact/GPUZIP.exe" -Force
+
+          Write-Host "OneFile executable: $($exe.FullName)"
+          Write-Host "Artifact: artifact/GPUZIP.exe"
           Write-Host "Size: $($exe.Length) bytes"
 
-      - name: Upload Windows x64 build
+      - name: Verify OneFile artifact
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "artifact/GPUZIP.exe")) {
+            throw "GPUZIP.exe is missing."
+          }
+          $files = @(Get-ChildItem "artifact" -File)
+          if ($files.Count -ne 1) {
+            throw "Artifact directory must contain exactly one file."
+          }
+
+      - name: Upload GPUZIP OneFile EXE
         uses: actions/upload-artifact@v4
         with:
-          name: GPUZIP-win-x64
-          path: CUDA/release/GPUZIP-win-x64/**
+          name: GPUZIP-OneFile-win-x64
+          path: artifact/GPUZIP.exe
           if-no-files-found: error
           retention-days: 30
